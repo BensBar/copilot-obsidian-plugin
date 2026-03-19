@@ -6,7 +6,7 @@ Bring GitHub Copilot's full agentic AI engine directly into your Obsidian vault.
 ![Requires: Copilot CLI](https://img.shields.io/badge/requires-Copilot%20CLI-blue)
 
 ---
-<img src="screenshot1.png" width="300" style="margin-right: 16px;">
+<img src="screenshot1.png" width="300" style="margin-right: 8px;">
 <img src="screenshot2.png" width="400">
 ---
 ## Features
