@@ -1,0 +1,617 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   obsidian-copilot  ·  styles.css
+   Tokens map to Obsidian's CSS variables so the plugin respects all themes.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Root layout ──────────────────────────────────────────────────────────── */
+.copilot-chat-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--background-primary);
+  font-family: var(--font-interface);
+}
+
+/* ── Toolbar ──────────────────────────────────────────────────────────────── */
+.copilot-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  flex-shrink: 0;
+}
+
+.copilot-toolbar-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-normal);
+  letter-spacing: -0.01em;
+}
+
+.copilot-toolbar-logo {
+  font-size: 16px;
+  color: var(--color-accent);
+  line-height: 1;
+}
+
+.copilot-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.copilot-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+  padding: 0;
+}
+
+.copilot-icon-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.copilot-icon-btn.active {
+  background: var(--color-accent-1);
+  color: var(--color-accent);
+}
+
+.copilot-icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ── Status bar ───────────────────────────────────────────────────────────── */
+.copilot-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font-size: 11px;
+  color: var(--text-faint);
+  background: var(--background-secondary);
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.copilot-status-bar:hover {
+  background: var(--background-modifier-hover);
+}
+
+.copilot-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.copilot-status-dot.connected {
+  background: #22c55e;
+  box-shadow: 0 0 4px rgba(34, 197, 94, 0.5);
+}
+
+.copilot-status-dot.disconnected {
+  background: var(--color-red);
+}
+
+.copilot-status-dot.thinking {
+  background: var(--color-accent);
+  animation: copilot-pulse 1s ease-in-out infinite;
+}
+
+@keyframes copilot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+/* ── Messages area ────────────────────────────────────────────────────────── */
+.copilot-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  scroll-behavior: smooth;
+}
+
+.copilot-messages::-webkit-scrollbar {
+  width: 4px;
+}
+.copilot-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+.copilot-messages::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb-bg);
+  border-radius: 4px;
+}
+
+/* ── Welcome screen ───────────────────────────────────────────────────────── */
+.copilot-welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 32px 16px 24px;
+  gap: 8px;
+  color: var(--text-muted);
+}
+
+.copilot-welcome-logo {
+  font-size: 40px;
+  line-height: 1;
+  color: var(--color-accent);
+  margin-bottom: 4px;
+  animation: copilot-float 3s ease-in-out infinite;
+}
+
+@keyframes copilot-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+.copilot-welcome h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-normal);
+  letter-spacing: -0.02em;
+}
+
+.copilot-welcome p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 240px;
+}
+
+.copilot-welcome-caps {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 12px;
+  width: 100%;
+}
+
+.copilot-cap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.copilot-cap span:first-child {
+  font-size: 14px;
+}
+
+/* ── Message bubbles ──────────────────────────────────────────────────────── */
+.copilot-message {
+  display: flex;
+  gap: 9px;
+  padding: 4px 2px;
+  animation: copilot-message-in 0.18s ease;
+}
+
+@keyframes copilot-message-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.copilot-message-user {
+  flex-direction: row-reverse;
+}
+
+.copilot-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.copilot-message-user .copilot-avatar {
+  background: var(--color-accent);
+  color: white;
+}
+
+.copilot-message-user .copilot-avatar svg {
+  width: 13px;
+  height: 13px;
+}
+
+.copilot-message-assistant .copilot-avatar {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--color-accent);
+}
+
+.copilot-message-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: calc(100% - 42px);
+}
+
+.copilot-message-user .copilot-message-body {
+  align-items: flex-end;
+}
+
+.copilot-message-content {
+  padding: 9px 12px;
+  border-radius: 12px;
+  font-size: inherit;
+  line-height: 1.55;
+  word-break: break-word;
+  position: relative;
+}
+
+.copilot-message-user .copilot-message-content {
+  background: var(--color-accent);
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.copilot-message-assistant .copilot-message-content {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-bottom-left-radius: 4px;
+  color: var(--text-normal);
+}
+
+/* Markdown inside assistant messages */
+.copilot-message-assistant .copilot-message-content p {
+  margin: 0 0 8px;
+}
+.copilot-message-assistant .copilot-message-content p:last-child {
+  margin-bottom: 0;
+}
+.copilot-message-assistant .copilot-message-content code {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.88em;
+  font-family: var(--font-monospace);
+}
+.copilot-message-assistant .copilot-message-content pre {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.copilot-message-assistant .copilot-message-content pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 0.85em;
+}
+.copilot-message-assistant .copilot-message-content h1,
+.copilot-message-assistant .copilot-message-content h2,
+.copilot-message-assistant .copilot-message-content h3 {
+  margin: 12px 0 6px;
+  font-size: 1em;
+  font-weight: 600;
+}
+.copilot-message-assistant .copilot-message-content ul,
+.copilot-message-assistant .copilot-message-content ol {
+  padding-left: 18px;
+  margin: 6px 0;
+}
+.copilot-message-assistant .copilot-message-content li {
+  margin: 2px 0;
+}
+.copilot-message-assistant .copilot-message-content blockquote {
+  border-left: 3px solid var(--color-accent);
+  margin: 8px 0;
+  padding: 4px 10px;
+  color: var(--text-muted);
+}
+.copilot-message-assistant .copilot-message-content table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.9em;
+  margin: 8px 0;
+}
+.copilot-message-assistant .copilot-message-content th,
+.copilot-message-assistant .copilot-message-content td {
+  border: 1px solid var(--background-modifier-border);
+  padding: 5px 8px;
+  text-align: left;
+}
+.copilot-message-assistant .copilot-message-content th {
+  background: var(--background-primary);
+  font-weight: 600;
+}
+
+/* Error messages */
+.copilot-message-error .copilot-message-content {
+  background: var(--background-modifier-error);
+  border-color: var(--color-red);
+  color: var(--color-red);
+}
+
+/* System messages */
+.copilot-system-message {
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  padding: 4px 8px;
+  font-style: italic;
+}
+.copilot-system-message.error {
+  color: var(--color-red);
+}
+
+/* Streaming cursor */
+.copilot-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--color-accent);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: copilot-blink 0.9s step-end infinite;
+  border-radius: 1px;
+}
+
+@keyframes copilot-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* ── Message footer ───────────────────────────────────────────────────────── */
+.copilot-message-footer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  height: 20px;
+}
+
+.copilot-message:hover .copilot-message-footer {
+  opacity: 1;
+}
+
+.copilot-timestamp {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  margin-right: 4px;
+}
+
+.copilot-msg-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.copilot-msg-action:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.copilot-msg-action svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* ── Input area ───────────────────────────────────────────────────────────── */
+.copilot-input-area {
+  padding: 10px 10px 12px;
+  border-top: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.copilot-input-wrapper {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  padding: 6px 6px 6px 10px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.copilot-input-wrapper:focus-within {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-1);
+}
+
+.copilot-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  resize: none;
+  font-size: 13px;
+  font-family: var(--font-interface);
+  color: var(--text-normal);
+  line-height: 1.5;
+  padding: 0;
+  outline: none;
+  min-height: 20px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.copilot-input::placeholder {
+  color: var(--text-faint);
+}
+
+.copilot-send-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 7px;
+  background: var(--color-accent);
+  color: white;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, transform 0.1s, opacity 0.15s;
+  padding: 0;
+}
+
+.copilot-send-btn:hover:not(:disabled) {
+  background: var(--color-accent-2, var(--color-accent));
+  transform: scale(1.05);
+}
+
+.copilot-send-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.copilot-send-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.copilot-send-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ── Quick action pills ───────────────────────────────────────────────────── */
+.copilot-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.copilot-pill {
+  font-size: 11.5px;
+  padding: 4px 9px;
+  border-radius: 20px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
+  white-space: nowrap;
+  font-family: var(--font-interface);
+}
+
+.copilot-pill:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-1);
+  color: var(--color-accent);
+}
+
+/* ── Settings page ────────────────────────────────────────────────────────── */
+.copilot-settings-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 24px 0 20px;
+  gap: 4px;
+}
+
+.copilot-settings-logo {
+  font-size: 36px;
+  color: var(--color-accent);
+  margin-bottom: 4px;
+}
+
+.copilot-settings-header h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.copilot-settings-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  max-width: 360px;
+}
+
+.copilot-settings-section {
+  margin: 20px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+
+.copilot-settings-about {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.copilot-settings-about p {
+  margin: 0 0 8px;
+}
+
+.copilot-settings-about p:last-child {
+  margin-bottom: 0;
+}
+
+.copilot-settings-about a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.copilot-settings-about a:hover {
+  text-decoration: underline;
+}
+
+/* ── Responsive tweaks for narrow sidebar ─────────────────────────────────── */
+@media (max-width: 280px) {
+  .copilot-welcome-caps {
+    grid-template-columns: 1fr;
+  }
+  .copilot-pills {
+    flex-direction: column;
+  }
+}
