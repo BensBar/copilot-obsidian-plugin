@@ -115,8 +115,8 @@ export default class CopilotPlugin extends Plugin {
       this.clientManager = new CopilotClientManager(this.settings, tools);
       await this.clientManager.connect();
 
-      // Update all open view status bars
-      this.getOpenViews().forEach((v) => v.updateStatusBar());
+      // Update all open view status bars and re-register manager callbacks
+      this.getOpenViews().forEach((v) => v.refreshManager());
       return true;
     } catch (err: any) {
       new Notice(`⚠️ Copilot: ${err.message}`, 8000);

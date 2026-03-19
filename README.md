@@ -49,7 +49,28 @@ Required for the `@github/copilot-sdk` package bundled with this plugin.
 
 ## Installation
 
-### Manual (until listed in community plugins)
+### Option 1 — BRAT (easiest, recommended)
+
+[BRAT](https://github.com/TfTHacker/obsidian42-brat) lets you install plugins directly from GitHub without building from source.
+
+1. Install the **Obsidian42 - BRAT** plugin from the Obsidian Community Plugins browser
+2. Open BRAT settings and click **"Add Beta plugin"**
+3. Enter the repo URL: `https://github.com/BensBar/copilot-obsidian-plugin`
+4. Click **Add Plugin** — BRAT will download and install it automatically
+5. In **Settings → Community plugins**, enable **GitHub Copilot**
+
+### Option 2 — Manual install from GitHub Releases
+
+1. Go to the [latest release](https://github.com/BensBar/copilot-obsidian-plugin/releases/latest) and download:
+   - `main.js`
+   - `manifest.json`
+   - `styles.css`
+2. Create the folder `<your-vault>/.obsidian/plugins/copilot-obsidian-plugin/`
+3. Copy the three downloaded files into that folder
+4. In Obsidian: **Settings → Community plugins → Enable** → toggle on **GitHub Copilot**
+5. Click the bot icon in the left ribbon, or use **Ctrl/Cmd+P → Open Copilot chat**
+
+### Option 3 — Build from source
 
 1. Clone or download this repo
 2. Run `npm install && npm run build`
@@ -148,8 +169,10 @@ The SDK communicates with the Copilot CLI as a subprocess via JSON-RPC. The plug
 - Check [github.com/settings/copilot](https://github.com/settings/copilot) that your plan is active
 
 **Connection drops mid-conversation**
-- The status bar will show "Disconnected" — click it to reconnect
-- The CLI process may have timed out; use **Reset session** to start fresh
+- The plugin automatically attempts to reconnect with exponential backoff (up to 6 retries over ~2 minutes)
+- A yellow banner at the top of the chat shows "⚠️ Disconnected — attempting to reconnect…" while retrying
+- If all retries fail, a red banner appears with a link to Settings where you can manually reconnect
+- To force an immediate reconnect, click the status dot at the top of the chat panel
 
 **Plugin won't load**
 - Check Developer Tools console (Ctrl+Shift+I) for errors

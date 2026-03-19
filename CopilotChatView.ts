@@ -9,6 +9,7 @@ import {
 import type CopilotPlugin from "./main";
 import { COPILOT_VIEW_TYPE } from "./types";
 import type { ChatMessage } from "./types";
+import type { ConnectionState } from "./CopilotClient";
 
 export class CopilotChatView extends ItemView {
   private plugin: CopilotPlugin;
@@ -17,6 +18,7 @@ export class CopilotChatView extends ItemView {
   private inputEl!: HTMLTextAreaElement;
   private sendBtn!: HTMLButtonElement;
   private statusBar!: HTMLElement;
+  private reconnectBannerEl: HTMLElement | null = null;
   private isGenerating = false;
 
   constructor(leaf: WorkspaceLeaf, plugin: CopilotPlugin) {
@@ -152,7 +154,9 @@ export class CopilotChatView extends ItemView {
 
     // ── Auto-connect ─────────────────────────────────────────────────────
     if (!this.plugin.clientManager?.getIsConnected()) {
-      this.plugin.connect().then(() => this.updateStatusBar());
+      this.plugin.connect().then(() => this.refreshManager());
+    } else {
+      this.setupManagerCallbacks();
     }
   }
 
@@ -167,13 +171,10 @@ export class CopilotChatView extends ItemView {
       return;
     }
 
+    // If disconnected, show the reconnect banner and wait — do NOT send
     if (!manager.getIsConnected()) {
-      this.appendSystemMessage("⚠️ Not connected. Reconnecting…", true);
-      await this.plugin.connect();
-      if (!manager.getIsConnected()) {
-        this.appendSystemMessage("❌ Connection failed. Check settings.", true);
-        return;
-      }
+      this.showReconnectingBanner();
+      return;
     }
 
     // Build final prompt — optionally inject active note context
@@ -219,7 +220,14 @@ export class CopilotChatView extends ItemView {
       },
       // onError
       (error: Error) => {
-        this.finalizeMessage(assistantId, `❌ ${error.message}`, true);
+        // If the send failed because the connection dropped, the auto-reconnect
+        // is already in progress — remove the empty placeholder and let the
+        // banner handle UX rather than showing a red error bubble.
+        if (!manager.getIsConnected()) {
+          this.removeMessage(assistantId);
+        } else {
+          this.finalizeMessage(assistantId, `❌ ${error.message}`, true);
+        }
         this.isGenerating = false;
         this.sendBtn.disabled = false;
         this.updateStatusBar();
@@ -398,6 +406,77 @@ export class CopilotChatView extends ItemView {
     this.scrollToBottom();
   }
 
+  // ── Reconnect banner ──────────────────────────────────────────────────
+  private showReconnectingBanner(): void {
+    if (!this.reconnectBannerEl) {
+      this.reconnectBannerEl = createDiv({ cls: "copilot-reconnect-banner" });
+      this.messagesEl.insertBefore(this.reconnectBannerEl, this.messagesEl.firstChild);
+    }
+    this.reconnectBannerEl.empty();
+    this.reconnectBannerEl.removeClass("failed");
+    this.reconnectBannerEl.createSpan({ cls: "copilot-reconnect-spinner" });
+    this.reconnectBannerEl.createSpan({ text: " ⚠️ Disconnected — attempting to reconnect…" });
+  }
+
+  private showFailedBanner(): void {
+    if (!this.reconnectBannerEl) {
+      this.reconnectBannerEl = createDiv({ cls: "copilot-reconnect-banner" });
+      this.messagesEl.insertBefore(this.reconnectBannerEl, this.messagesEl.firstChild);
+    }
+    this.reconnectBannerEl.empty();
+    this.reconnectBannerEl.addClass("failed");
+    this.reconnectBannerEl.createSpan({ text: "❌ Could not reconnect. " });
+    const link = this.reconnectBannerEl.createEl("a", {
+      text: "Go to Settings to reconnect manually.",
+      href: "#",
+    });
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      // @ts-ignore
+      this.app.setting.open();
+      // @ts-ignore
+      this.app.setting.openTabById("obsidian-copilot");
+    });
+  }
+
+  private hideReconnectBanner(): void {
+    if (this.reconnectBannerEl) {
+      this.reconnectBannerEl.remove();
+      this.reconnectBannerEl = null;
+    }
+  }
+
+  // ── Connection state callback (called by CopilotClientManager) ────────
+  handleConnectionState(state: ConnectionState): void {
+    if (state === "connected") {
+      this.hideReconnectBanner();
+      if (!this.isGenerating) this.sendBtn.disabled = false;
+      this.updateStatusBar();
+    } else if (state === "reconnecting") {
+      this.showReconnectingBanner();
+      this.sendBtn.disabled = true;
+      this.updateStatusBar();
+    } else if (state === "failed") {
+      this.showFailedBanner();
+      this.sendBtn.disabled = false;
+      this.updateStatusBar();
+    }
+  }
+
+  // ── Register callbacks on the active client manager ───────────────────
+  private setupManagerCallbacks(): void {
+    this.plugin.clientManager?.setOnStateChange((state) => {
+      this.handleConnectionState(state);
+    });
+  }
+
+  // ── Called after a new manager is created (e.g. reconnect from settings) ─
+  refreshManager(): void {
+    this.setupManagerCallbacks();
+    this.hideReconnectBanner();
+    this.updateStatusBar();
+  }
+
   private renderWelcome(): void {
     const welcome = this.messagesEl.createDiv("copilot-welcome");
     welcome.createDiv({ cls: "copilot-welcome-logo", text: "⬡" });
@@ -432,6 +511,12 @@ export class CopilotChatView extends ItemView {
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
   }
 
+  private removeMessage(id: string): void {
+    const idx = this.messages.findIndex((m) => m.id === id);
+    if (idx !== -1) this.messages.splice(idx, 1);
+    this.messagesEl.querySelector(`[data-id="${id}"]`)?.remove();
+  }
+
   private trimHistory(): void {
     const max = this.plugin.settings.maxHistoryLength;
     while (this.messages.length > max) {
@@ -462,7 +547,7 @@ export class CopilotChatView extends ItemView {
     if (!connected) {
       this.statusBar.style.cursor = "pointer";
       this.statusBar.addEventListener("click", () => {
-        this.plugin.connect().then(() => this.updateStatusBar());
+        this.plugin.connect().then(() => this.refreshManager());
       });
     }
   }
