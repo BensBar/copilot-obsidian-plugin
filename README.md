@@ -6,7 +6,9 @@ Bring GitHub Copilot's full agentic AI engine directly into your Obsidian vault.
 ![Requires: Copilot CLI](https://img.shields.io/badge/requires-Copilot%20CLI-blue)
 
 ---
-
+<img src="screenshot1.png" alt="Screenshot 1" width="600">
+<img src="screenshot2.png" alt="Screenshot 2" width="600">
+---
 ## Features
 
 - **Chat panel** — Persistent sidebar chat with full markdown rendering, streaming responses, and session history
