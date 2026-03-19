@@ -5,6 +5,8 @@ import { execSync, execFileSync } from "child_process";
 import { existsSync } from "fs";
 import type { CopilotPluginSettings, ChatMessage } from "./types";
 
+export type ConnectionState = "connected" | "reconnecting" | "failed";
+
 // ─── Resolve the copilot CLI to a full absolute path ─────────────────────────
 // Obsidian on macOS doesn't inherit the user's shell PATH (especially NVM),
 // so bare command names like "copilot" fail existsSync and spawn.
@@ -55,40 +57,71 @@ export class CopilotClientManager {
   private tools: any[];
   private isConnected = false;
 
+  // ── Auto-reconnect / heartbeat state ──────────────────────────────────
+  private heartbeatIntervalId: ReturnType<typeof setInterval> | null = null;
+  private reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempts = 0;
+  private readonly maxReconnectAttempts = 6;
+  private isManualDisconnect = false;
+  private isReconnecting = false;
+  private onStateChange: ((state: ConnectionState) => void) | null = null;
+
   constructor(settings: CopilotPluginSettings, tools: any[]) {
     this.settings = settings;
     this.tools = tools;
   }
 
+  // Replaces any previously registered callback — safe to call multiple times.
+  setOnStateChange(cb: (state: ConnectionState) => void): void {
+    this.onStateChange = cb;
+  }
+
   // ── Connect & initialize session ────────────────────────────────────────
   async connect(): Promise<void> {
+    this.isManualDisconnect = false;
     try {
-      // Map our tool definitions to SDK format
-      const sdkTools = this.tools.map((tool) =>
-        defineTool(tool.name, {
-          description: tool.description,
-          parameters: tool.parameters,
-          handler: tool.handler,
-        })
-      );
-
-      // Always pass cliPath so the SDK never calls getBundledCliPath()
-      // (which uses import.meta.resolve and breaks in Obsidian's CJS context).
-      // Resolve to an absolute path so existsSync() in the SDK passes and
-      // Obsidian's limited PATH doesn't hide NVM-installed binaries.
-      const resolvedCLI = resolveCLIPath(this.settings.cliPath);
-      const clientOptions: any = {
-        cliPath: resolvedCLI,
-      };
-
-      this.client = new CopilotClientSDK(clientOptions);
-
-      await this.createSession(sdkTools);
-      this.isConnected = true;
+      await this.reconnectInternal();
     } catch (err: any) {
       this.isConnected = false;
       throw new Error(this.formatConnectionError(err));
     }
+  }
+
+  // ── Internal reconnect (shared by connect() and auto-reconnect) ─────────
+  private async reconnectInternal(): Promise<void> {
+    // Clean up any existing client/session first
+    try {
+      await this.session?.close?.();
+      await this.client?.stop?.();
+    } catch (_) {}
+    this.session = null;
+    this.client = null;
+
+    // Map our tool definitions to SDK format
+    const sdkTools = this.tools.map((tool) =>
+      defineTool(tool.name, {
+        description: tool.description,
+        parameters: tool.parameters,
+        handler: tool.handler,
+      })
+    );
+
+    // Always pass cliPath so the SDK never calls getBundledCliPath()
+    // (which uses import.meta.resolve and breaks in Obsidian's CJS context).
+    // Resolve to an absolute path so existsSync() in the SDK passes and
+    // Obsidian's limited PATH doesn't hide NVM-installed binaries.
+    const resolvedCLI = resolveCLIPath(this.settings.cliPath);
+    const clientOptions: any = { cliPath: resolvedCLI };
+
+    this.client = new CopilotClientSDK(clientOptions);
+    await this.createSession(sdkTools);
+
+    this.isConnected = true;
+    this.isReconnecting = false;
+    this.reconnectAttempts = 0;
+    this.stopHeartbeat();
+    this.startHeartbeat();
+    this.onStateChange?.("connected");
   }
 
   private async createSession(sdkTools: any[]): Promise<void> {
@@ -114,6 +147,7 @@ export class CopilotClientManager {
     onError: ErrorCallback
   ): Promise<void> {
     if (!this.session || !this.isConnected) {
+      this.scheduleReconnect();
       onError(new Error("Not connected. Please check the plugin settings and ensure the Copilot CLI is installed."));
       return;
     }
@@ -152,10 +186,68 @@ export class CopilotClientManager {
         onDone(fullContent);
       }
     } catch (err: any) {
-      // Session may have died — mark disconnected so UI shows reconnect
+      // Session may have died — mark disconnected and trigger auto-reconnect
       this.isConnected = false;
+      this.scheduleReconnect();
       onError(err);
     }
+  }
+
+  // ── Heartbeat ───────────────────────────────────────────────────────────
+  private startHeartbeat(): void {
+    this.heartbeatIntervalId = setInterval(() => {
+      // Safety net: if we're disconnected but not actively reconnecting,
+      // kick off the reconnect process (covers idle/unexpected drops).
+      if (!this.isConnected && this.shouldAttemptReconnect()) {
+        this.scheduleReconnect();
+      }
+    }, 30_000);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatIntervalId !== null) {
+      clearInterval(this.heartbeatIntervalId);
+      this.heartbeatIntervalId = null;
+    }
+    if (this.reconnectTimeoutId !== null) {
+      clearTimeout(this.reconnectTimeoutId);
+      this.reconnectTimeoutId = null;
+    }
+  }
+
+  private shouldAttemptReconnect(): boolean {
+    return !this.isManualDisconnect && !this.isReconnecting;
+  }
+
+  // ── Exponential-backoff reconnect ───────────────────────────────────────
+  private scheduleReconnect(): void {
+    if (!this.shouldAttemptReconnect()) return;
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      this.onStateChange?.("failed");
+      return;
+    }
+
+    this.isReconnecting = true;
+    // Delays: 2s, 4s, 8s, 16s, 32s, 60s
+    const delay = Math.min(Math.pow(2, this.reconnectAttempts + 1) * 1000, 60_000);
+    this.reconnectAttempts++;
+    this.onStateChange?.("reconnecting");
+
+    this.reconnectTimeoutId = setTimeout(async () => {
+      this.reconnectTimeoutId = null;
+      if (this.isManualDisconnect) {
+        this.isReconnecting = false;
+        return;
+      }
+      try {
+        await this.reconnectInternal();
+        // Success — reconnectInternal resets state and fires onStateChange('connected')
+      } catch (_) {
+        this.isReconnecting = false;
+        // Schedule the next attempt with a longer delay
+        this.scheduleReconnect();
+      }
+    }, delay);
   }
 
   // ── Reset session (clears history) ─────────────────────────────────────
@@ -190,6 +282,10 @@ export class CopilotClientManager {
 
   // ── Disconnect ───────────────────────────────────────────────────────────
   async disconnect(): Promise<void> {
+    this.isManualDisconnect = true;
+    this.isReconnecting = false;
+    this.reconnectAttempts = 0;
+    this.stopHeartbeat();
     try {
       await this.session?.close?.();
       await this.client?.stop?.();
@@ -204,6 +300,10 @@ export class CopilotClientManager {
 
   getIsConnected(): boolean {
     return this.isConnected;
+  }
+
+  getIsReconnecting(): boolean {
+    return this.isReconnecting;
   }
 
   // ── Format connection errors for users ──────────────────────────────────
