@@ -20,6 +20,30 @@ export class CopilotChatView extends ItemView {
   private statusBar!: HTMLElement;
   private reconnectBannerEl: HTMLElement | null = null;
   private isGenerating = false;
+  private thinkingIntervalId: ReturnType<typeof setInterval> | null = null;
+
+  private static readonly THINKING_MESSAGES = [
+    "Thinking…",
+    "Consulting the knowledge spirits…",
+    "Herding semicolons…",
+    "Asking the LLM nicely…",
+    "Summoning tokens…",
+    "Rummaging through training data…",
+    "Pretending to think deeply…",
+    "Parsing your vault's secrets…",
+    "Connecting neurons (borrowed)…",
+    "On hold with the AI hotline…",
+    "Staring into the void…",
+    "Making stuff up with confidence…",
+    "Burning GPU cycles for you…",
+    "Doing the math (approximately)…",
+    "Definitely not just vibing…",
+    "Channeling the model…",
+    "Generating plausible nonsense…",
+    "Translating brain waves…",
+    "One moment, computing brilliance…",
+    "Bribing the attention heads…",
+  ];
 
   constructor(leaf: WorkspaceLeaf, plugin: CopilotPlugin) {
     super(leaf);
@@ -199,7 +223,7 @@ export class CopilotChatView extends ItemView {
 
     this.isGenerating = true;
     this.sendBtn.disabled = true;
-    this.updateStatusBar("Thinking…");
+    this.startThinkingMessages();
 
     let streamBuffer = "";
 
@@ -215,7 +239,7 @@ export class CopilotChatView extends ItemView {
         this.finalizeMessage(assistantId, fullContent || streamBuffer);
         this.isGenerating = false;
         this.sendBtn.disabled = false;
-        this.updateStatusBar();
+        this.stopThinkingMessages();
         this.trimHistory();
       },
       // onError
@@ -230,7 +254,7 @@ export class CopilotChatView extends ItemView {
         }
         this.isGenerating = false;
         this.sendBtn.disabled = false;
-        this.updateStatusBar();
+        this.stopThinkingMessages();
       }
     );
   }
@@ -515,6 +539,27 @@ export class CopilotChatView extends ItemView {
     const idx = this.messages.findIndex((m) => m.id === id);
     if (idx !== -1) this.messages.splice(idx, 1);
     this.messagesEl.querySelector(`[data-id="${id}"]`)?.remove();
+  }
+
+  // ── Witty thinking messages ───────────────────────────────────────────
+  private startThinkingMessages(): void {
+    const messages = CopilotChatView.THINKING_MESSAGES;
+    // Pick a random starting index so it's not always "Thinking…" first
+    let idx = Math.floor(Math.random() * messages.length);
+    this.updateStatusBar(messages[idx]);
+
+    this.thinkingIntervalId = setInterval(() => {
+      idx = (idx + 1) % messages.length;
+      this.updateStatusBar(messages[idx]);
+    }, 2500);
+  }
+
+  private stopThinkingMessages(): void {
+    if (this.thinkingIntervalId !== null) {
+      clearInterval(this.thinkingIntervalId);
+      this.thinkingIntervalId = null;
+    }
+    this.updateStatusBar();
   }
 
   private trimHistory(): void {
