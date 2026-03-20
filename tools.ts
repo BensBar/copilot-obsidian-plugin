@@ -4,7 +4,26 @@ import { App, MarkdownView, TFile, Notice } from "obsidian";
 // These are passed to the Copilot SDK session so the agent can interact
 // with the Obsidian vault programmatically.
 
-export function buildVaultTools(app: App) {
+export function buildVaultTools(app: App, getActiveMarkdownView?: () => MarkdownView | null) {
+  const resolveActiveView = (): MarkdownView | null => {
+    // 1. Use the plugin's tracked last-focused view (survives focus moving to chat panel)
+    const tracked = getActiveMarkdownView?.();
+    if (tracked?.file) return tracked;
+
+    // 2. Try the workspace's current active view (works if something else is focused)
+    const active = app.workspace.getActiveViewOfType(MarkdownView);
+    if (active?.file) return active;
+
+    // 3. Last resort: find any open markdown leaf via getLeavesOfType (reliable Obsidian API)
+    const leaves = app.workspace.getLeavesOfType("markdown");
+    for (const leaf of leaves) {
+      if (leaf.view instanceof MarkdownView && leaf.view.file) {
+        return leaf.view;
+      }
+    }
+    return null;
+  };
+
   return [
     // ── Read active note ──────────────────────────────────────────────────
     {
@@ -16,14 +35,15 @@ export function buildVaultTools(app: App) {
         properties: {},
         required: [],
       },
-      handler: async () => {
-        const view = app.workspace.getActiveViewOfType(MarkdownView);
+      handler: () => {
+        const view = resolveActiveView();
         if (!view) {
           return { error: "No active note is open", content: null };
         }
         const file = view.file;
         if (!file) return { error: "Could not resolve file", content: null };
-        const content = await app.vault.read(file);
+        // Use editor.getValue() — synchronous, no async needed for an open note
+        const content = view.editor?.getValue() ?? "";
         return {
           filename: file.name,
           path: file.path,
@@ -77,13 +97,14 @@ export function buildVaultTools(app: App) {
         },
         required: ["content"],
       },
-      handler: async (args: { content: string; addDivider?: boolean }) => {
-        const view = app.workspace.getActiveViewOfType(MarkdownView);
+      handler: (args: { content: string; addDivider?: boolean }) => {
+        const view = resolveActiveView();
         if (!view?.file) return { error: "No active note open" };
 
-        const existing = await app.vault.read(view.file);
+        // Use editor to read + write synchronously for an open note
+        const existing = view.editor?.getValue() ?? "";
         const divider = args.addDivider ? "\n\n---\n\n" : "\n\n";
-        await app.vault.modify(view.file, existing + divider + args.content);
+        view.editor?.setValue(existing + divider + args.content);
         new Notice("✅ Copilot appended to note");
         return { success: true, appended: args.content.length + " chars" };
       },
@@ -261,7 +282,7 @@ export function buildVaultTools(app: App) {
           const f = app.vault.getAbstractFileByPath(args.path);
           if (f instanceof TFile) file = f;
         } else {
-          const view = app.workspace.getActiveViewOfType(MarkdownView);
+          const view = resolveActiveView();
           file = view?.file ?? null;
         }
 

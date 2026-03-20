@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, Notice, addIcon } from "obsidian";
+import { Plugin, WorkspaceLeaf, Notice, addIcon, MarkdownView } from "obsidian";
 import { CopilotChatView } from "./CopilotChatView";
 import { CopilotClientManager } from "./CopilotClient";
 import { CopilotSettingTab } from "./CopilotSettingTab";
@@ -15,9 +15,21 @@ const COPILOT_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2
 export default class CopilotPlugin extends Plugin {
   settings!: CopilotPluginSettings;
   clientManager: CopilotClientManager | null = null;
+  lastActiveMarkdownView: MarkdownView | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
+
+    // Track the last focused MarkdownView so tools can still reference it
+    // even when focus has moved to the Copilot chat panel.
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", (leaf) => {
+        const view = leaf?.view;
+        if (view instanceof MarkdownView) {
+          this.lastActiveMarkdownView = view;
+        }
+      })
+    );
 
     // Register sidebar icon
     addIcon("copilot-star", COPILOT_ICON_SVG);
@@ -93,6 +105,20 @@ export default class CopilotPlugin extends Plugin {
 
     // Auto-connect on load
     this.app.workspace.onLayoutReady(() => {
+      // Seed lastActiveMarkdownView so it's available immediately on first use,
+      // even if the user hasn't switched leaves yet after loading.
+      this.lastActiveMarkdownView =
+        this.app.workspace.getActiveViewOfType(MarkdownView);
+      if (!this.lastActiveMarkdownView) {
+        const leaves = this.app.workspace.getLeavesOfType("markdown");
+        for (const leaf of leaves) {
+          if (leaf.view instanceof MarkdownView && leaf.view.file) {
+            this.lastActiveMarkdownView = leaf.view as MarkdownView;
+            break;
+          }
+        }
+      }
+
       this.connect().catch(() => {
         // Silently fail on startup — user will see status in panel
       });
@@ -106,7 +132,9 @@ export default class CopilotPlugin extends Plugin {
   // ── Connection management ─────────────────────────────────────────────
   async connect(): Promise<boolean> {
     try {
-      const tools = buildVaultTools(this.app);
+      const tools = buildVaultTools(this.app, () =>
+        this.lastActiveMarkdownView ?? this.app.workspace.getActiveViewOfType(MarkdownView)
+      );
 
       if (this.clientManager) {
         await this.clientManager.disconnect();

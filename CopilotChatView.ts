@@ -201,10 +201,14 @@ export class CopilotChatView extends ItemView {
       return;
     }
 
-    // Build final prompt — optionally inject active note context
+    // Build final prompt — optionally inject active note context.
+    // Use the plugin's tracked lastActiveMarkdownView so the reference
+    // survives focus moving to this chat panel.
     let finalPrompt = content;
     if (this.plugin.settings.autoContextActiveNote) {
-      const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+      const view =
+        this.plugin.lastActiveMarkdownView ??
+        this.app.workspace.getActiveViewOfType(MarkdownView);
       if (view?.file) {
         const noteContent = await this.app.vault.read(view.file);
         finalPrompt = `[Active note: ${view.file.name}]\n\`\`\`\n${noteContent.slice(0, 4000)}\n\`\`\`\n\n${content}`;
