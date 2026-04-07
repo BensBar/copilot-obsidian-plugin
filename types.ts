@@ -18,7 +18,7 @@ export interface CopilotPluginSettings {
 
 export const DEFAULT_SETTINGS: CopilotPluginSettings = {
   cliPath: "copilot",
-  model: "claude-sonnet-4-5",
+  model: "",
   systemMessage:
     "You are a knowledgeable AI assistant embedded in Obsidian. You help the user manage their personal knowledge base, draft notes, summarize content, connect ideas, and answer questions. Be concise, thoughtful, and markdown-aware.",
   streamResponses: true,

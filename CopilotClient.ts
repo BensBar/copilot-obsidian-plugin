@@ -11,7 +11,32 @@ export type ConnectionState = "connected" | "reconnecting" | "failed";
 // Obsidian on macOS doesn't inherit the user's shell PATH (especially NVM),
 // so bare command names like "copilot" fail existsSync and spawn.
 // We run `which` through a login shell so it picks up ~/.zshrc / ~/.bashrc.
-function resolveCLIPath(cliPath: string): string {
+function resolveShellEnv(): Record<string, string> {
+  // Obsidian/Electron doesn't inherit the interactive shell environment,
+  // so `node`, NVM paths, etc. are missing from PATH.  Capture the real
+  // login-shell environment once and hand it to the SDK so the spawned
+  // copilot process (and its #!/usr/bin/env node shebang) can find node.
+  const shells = ["/bin/zsh", "/bin/bash"];
+  for (const shell of shells) {
+    try {
+      const raw = execFileSync(shell, ["-l", "-c", "env"], {
+        timeout: 5000,
+        encoding: "utf8",
+      });
+      const env: Record<string, string> = {};
+      for (const line of raw.split("\n")) {
+        const idx = line.indexOf("=");
+        if (idx > 0) env[line.slice(0, idx)] = line.slice(idx + 1);
+      }
+      if (env.PATH) return env;
+    } catch (_) {
+      // try next shell
+    }
+  }
+  return { ...process.env } as Record<string, string>;
+}
+
+function resolveCLIPath(cliPath: string, env: Record<string, string>): string {
   if (cliPath.startsWith("/")) return cliPath; // already absolute
 
   const shells = ["/bin/zsh", "/bin/bash"];
@@ -28,8 +53,8 @@ function resolveCLIPath(cliPath: string): string {
   }
 
   // Fallback: scan common NVM bin dirs
-  const home = process.env.HOME ?? `/Users/${process.env.USER}`;
-  const nvmDir = process.env.NVM_DIR ?? `${home}/.nvm`;
+  const home = env.HOME ?? process.env.HOME ?? `/Users/${process.env.USER}`;
+  const nvmDir = env.NVM_DIR ?? process.env.NVM_DIR ?? `${home}/.nvm`;
   try {
     const bins = execSync(`ls "${nvmDir}/versions/node/"`, { encoding: "utf8" })
       .trim().split("\n");
@@ -110,8 +135,11 @@ export class CopilotClientManager {
     // (which uses import.meta.resolve and breaks in Obsidian's CJS context).
     // Resolve to an absolute path so existsSync() in the SDK passes and
     // Obsidian's limited PATH doesn't hide NVM-installed binaries.
-    const resolvedCLI = resolveCLIPath(this.settings.cliPath);
-    const clientOptions: any = { cliPath: resolvedCLI };
+    // Also pass the full login-shell env so the spawned copilot process
+    // (#!/usr/bin/env node) can locate the real Node binary.
+    const shellEnv = resolveShellEnv();
+    const resolvedCLI = resolveCLIPath(this.settings.cliPath, shellEnv);
+    const clientOptions: any = { cliPath: resolvedCLI, env: shellEnv };
 
     this.client = new CopilotClientSDK(clientOptions);
     await this.createSession(sdkTools);
@@ -131,10 +159,13 @@ export class CopilotClientManager {
     }
 
     this.session = await this.client.createSession({
-      model: this.settings.model,
+      ...(this.settings.model ? { model: this.settings.model } : {}),
       streaming: this.settings.streamResponses,
       tools: sdkTools,
-      systemMessage: this.settings.systemMessage,
+      systemMessage: {
+        mode: "replace" as const,
+        content: this.settings.systemMessage,
+      },
       onPermissionRequest: approveAll,
     });
   }

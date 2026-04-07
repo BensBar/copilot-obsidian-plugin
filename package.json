@@ -1,6 +1,6 @@
 {
   "name": "obsidian-copilot",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "GitHub Copilot AI assistant for Obsidian",
   "main": "main.js",
   "scripts": {
@@ -13,7 +13,7 @@
     "github-copilot",
     "ai"
   ],
-  "author": "Ben Stoll",
+  "author": "BensBar",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^16.11.6",
@@ -24,6 +24,6 @@
     "typescript": "4.7.4"
   },
   "dependencies": {
-    "@github/copilot-sdk": "latest"
+    "@github/copilot-sdk": "^0.1.32"
   }
 }
