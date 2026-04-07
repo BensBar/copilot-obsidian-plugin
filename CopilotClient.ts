@@ -158,6 +158,15 @@ export class CopilotClientManager {
       this.session = null;
     }
 
+    // Build custom agents array for the SDK
+    const customAgents = this.settings.customAgents.map((agent) => ({
+      name: agent.name,
+      displayName: agent.displayName,
+      description: agent.description,
+      prompt: agent.prompt,
+      tools: null, // all tools available
+    }));
+
     this.session = await this.client.createSession({
       ...(this.settings.model ? { model: this.settings.model } : {}),
       streaming: this.settings.streamResponses,
@@ -166,6 +175,7 @@ export class CopilotClientManager {
         mode: "replace" as const,
         content: this.settings.systemMessage,
       },
+      ...(customAgents.length > 0 ? { customAgents } : {}),
       onPermissionRequest: approveAll,
     });
   }

@@ -1,6 +1,7 @@
 import { App, PluginSettingTab, Setting, DropdownComponent } from "obsidian";
 import type CopilotPlugin from "./main";
 import { AVAILABLE_MODELS } from "./types";
+import type { CustomAgent } from "./types";
 
 export class CopilotSettingTab extends PluginSettingTab {
   plugin: CopilotPlugin;
@@ -128,6 +129,34 @@ export class CopilotSettingTab extends PluginSettingTab {
           })
       );
 
+    // ── Agents ─────────────────────────────────────────────────────────────
+    containerEl.createEl("h3", { text: "Agents", cls: "copilot-settings-section" });
+
+    const agentsDesc = new Setting(containerEl)
+      .setName("Custom agents")
+      .setDesc("Define agents with specialized prompts. Select them from the dropdown in the chat toolbar.");
+
+    // Render each existing agent
+    const agentsContainer = containerEl.createDiv("copilot-agents-list");
+    this.renderAgentsList(agentsContainer);
+
+    // Add agent button
+    new Setting(containerEl)
+      .addButton((btn) =>
+        btn
+          .setButtonText("+ Add agent")
+          .onClick(async () => {
+            this.plugin.settings.customAgents.push({
+              name: `agent-${Date.now()}`,
+              displayName: "New Agent",
+              description: "Describe what this agent does",
+              prompt: "You are a helpful assistant.",
+            });
+            await this.plugin.saveSettings();
+            this.renderAgentsList(agentsContainer);
+          })
+      );
+
     // ── Appearance ────────────────────────────────────────────────────────
     containerEl.createEl("h3", { text: "Appearance", cls: "copilot-settings-section" });
 
@@ -166,5 +195,72 @@ export class CopilotSettingTab extends PluginSettingTab {
       href: "https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-in-the-command-line",
     });
     link.target = "_blank";
+  }
+
+  private renderAgentsList(container: HTMLElement): void {
+    container.empty();
+    const agents = this.plugin.settings.customAgents;
+
+    agents.forEach((agent, index) => {
+      const card = container.createDiv("copilot-agent-card");
+
+      // Header row: display name + delete
+      const headerRow = card.createDiv("copilot-agent-card-header");
+
+      new Setting(headerRow)
+        .setName("Display name")
+        .addText((text) =>
+          text.setValue(agent.displayName).onChange(async (value) => {
+            agent.displayName = value;
+            await this.plugin.saveSettings();
+          })
+        );
+
+      new Setting(card)
+        .setName("Identifier")
+        .setDesc("Used internally and for @mentions (no spaces)")
+        .addText((text) =>
+          text.setValue(agent.name).onChange(async (value) => {
+            agent.name = value.replace(/\s/g, "-").toLowerCase();
+            await this.plugin.saveSettings();
+          })
+        );
+
+      new Setting(card)
+        .setName("Description")
+        .addText((text) =>
+          text.setValue(agent.description).onChange(async (value) => {
+            agent.description = value;
+            await this.plugin.saveSettings();
+          })
+        );
+
+      const promptSetting = new Setting(card)
+        .setName("Prompt");
+      const textarea = promptSetting.controlEl.createEl("textarea", {
+        cls: "copilot-agent-prompt-input",
+      });
+      textarea.value = agent.prompt;
+      textarea.rows = 3;
+      textarea.addEventListener("change", async () => {
+        agent.prompt = textarea.value;
+        await this.plugin.saveSettings();
+      });
+
+      new Setting(card)
+        .addButton((btn) =>
+          btn
+            .setButtonText("Delete")
+            .setWarning()
+            .onClick(async () => {
+              this.plugin.settings.customAgents.splice(index, 1);
+              if (this.plugin.settings.activeAgent === agent.name) {
+                this.plugin.settings.activeAgent = "";
+              }
+              await this.plugin.saveSettings();
+              this.renderAgentsList(container);
+            })
+        );
+    });
   }
 }

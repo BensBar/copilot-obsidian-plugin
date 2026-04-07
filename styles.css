@@ -254,3 +254,75 @@
   .copilot-welcome-caps { grid-template-columns: 1fr; }
   .copilot-pills { flex-direction: column; }
 }
+
+/* ── Agent dropdown ──────────────────────────────────────────────────── */
+
+.copilot-agent-dropdown {
+  display: flex; align-items: center; gap: 4px; cursor: pointer;
+  padding: 4px 10px; border-radius: 8px;
+  background: transparent; border: 0.5px solid var(--background-modifier-border);
+  transition: all 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
+  user-select: none;
+}
+.copilot-agent-dropdown:hover { background: var(--background-secondary); border-color: var(--text-faint); }
+
+.copilot-agent-label {
+  font-size: 11px; font-weight: 500; color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+.copilot-agent-chevron {
+  font-size: 9px; color: var(--text-faint); opacity: 0.5;
+  transition: transform 0.2s ease;
+}
+
+.copilot-agent-menu {
+  position: absolute; z-index: 100;
+  min-width: 200px; max-width: 260px;
+  background: var(--background-primary);
+  border: 0.5px solid var(--background-modifier-border);
+  border-radius: 10px; padding: 4px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  animation: copilot-appear 0.2s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+.copilot-agent-item {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 8px 12px; border-radius: 8px; cursor: pointer;
+  transition: background 0.2s ease;
+}
+.copilot-agent-item:hover { background: var(--background-secondary); }
+.copilot-agent-item.active { background: var(--background-secondary); }
+
+.copilot-agent-item-name {
+  font-size: 12px; font-weight: 500; color: var(--text-normal);
+  letter-spacing: -0.01em;
+}
+.copilot-agent-item.active .copilot-agent-item-name::after {
+  content: " ✓"; font-size: 10px; color: var(--text-faint); opacity: 0.6;
+}
+
+.copilot-agent-item-desc {
+  font-size: 10.5px; color: var(--text-faint); font-weight: 400;
+  letter-spacing: 0.01em;
+}
+
+/* ── Agent settings cards ────────────────────────────────────────────── */
+
+.copilot-agents-list { display: flex; flex-direction: column; gap: 8px; }
+
+.copilot-agent-card {
+  background: var(--background-secondary); border: none;
+  border-radius: 10px; padding: 12px 16px;
+}
+.copilot-agent-card .setting-item { border: none; padding: 4px 0; }
+
+.copilot-agent-card-header { display: flex; align-items: center; justify-content: space-between; }
+
+.copilot-agent-prompt-input {
+  width: 100%; min-height: 60px; resize: vertical;
+  background: var(--background-primary); border: 0.5px solid var(--background-modifier-border);
+  border-radius: 8px; padding: 8px 10px; font-size: 12px;
+  font-family: "SF Mono", "Fira Code", var(--font-monospace), monospace;
+  color: var(--text-normal); line-height: 1.5;
+}

@@ -8,7 +8,7 @@ import {
 } from "obsidian";
 import type CopilotPlugin from "./main";
 import { COPILOT_VIEW_TYPE } from "./types";
-import type { ChatMessage } from "./types";
+import type { ChatMessage, CustomAgent } from "./types";
 import type { ConnectionState } from "./CopilotClient";
 
 export class CopilotChatView extends ItemView {
@@ -18,6 +18,7 @@ export class CopilotChatView extends ItemView {
   private inputEl!: HTMLTextAreaElement;
   private sendBtn!: HTMLButtonElement;
   private statusBar!: HTMLElement;
+  private agentDropdownBtn!: HTMLElement;
   private reconnectBannerEl: HTMLElement | null = null;
   private isGenerating = false;
   private thinkingIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -73,6 +74,10 @@ export class CopilotChatView extends ItemView {
     const titleArea = toolbar.createDiv("copilot-toolbar-title");
     titleArea.createSpan({ cls: "copilot-toolbar-logo", text: "⬡" });
     titleArea.createSpan({ text: "Copilot" });
+
+    // ── Agent dropdown ────────────────────────────────────────────────────
+    this.agentDropdownBtn = toolbar.createDiv("copilot-agent-dropdown");
+    this.renderAgentDropdown();
 
     const actions = toolbar.createDiv("copilot-toolbar-actions");
 
@@ -205,6 +210,13 @@ export class CopilotChatView extends ItemView {
     // Use the plugin's tracked lastActiveMarkdownView so the reference
     // survives focus moving to this chat panel.
     let finalPrompt = content;
+
+    // Prepend @agent mention if a custom agent is active
+    const activeAgentName = this.plugin.settings.activeAgent;
+    if (activeAgentName) {
+      finalPrompt = `@${activeAgentName} ${finalPrompt}`;
+    }
+
     if (this.plugin.settings.autoContextActiveNote) {
       const view =
         this.plugin.lastActiveMarkdownView ??
@@ -518,7 +530,7 @@ export class CopilotChatView extends ItemView {
       ["📄", "Read & write notes"],
       ["🔍", "Search your vault"],
       ["✍️", "Generate content"],
-      ["🔗", "GitHub integration via MCP"],
+      ["🤖", "Custom agents"],
     ].forEach(([icon, label]) => {
       const cap = caps.createDiv("copilot-cap");
       cap.createSpan({ text: icon });
@@ -603,6 +615,85 @@ export class CopilotChatView extends ItemView {
 
   updateFontSize(size: string): void {
     if (this.messagesEl) this.messagesEl.style.fontSize = size;
+  }
+
+  // ── Agent dropdown ────────────────────────────────────────────────────
+  private renderAgentDropdown(): void {
+    this.agentDropdownBtn.empty();
+    const agents = this.plugin.settings.customAgents;
+    const active = this.plugin.settings.activeAgent;
+    const activeAgent = agents.find((a) => a.name === active);
+
+    const label = this.agentDropdownBtn.createSpan({
+      cls: "copilot-agent-label",
+      text: activeAgent?.displayName ?? "Default",
+    });
+    const chevron = this.agentDropdownBtn.createSpan({ cls: "copilot-agent-chevron", text: "▾" });
+
+    this.agentDropdownBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.showAgentMenu();
+    });
+  }
+
+  private showAgentMenu(): void {
+    // Remove existing menu if open
+    const existing = this.containerEl.querySelector(".copilot-agent-menu");
+    if (existing) { existing.remove(); return; }
+
+    const menu = createDiv("copilot-agent-menu");
+    const agents = this.plugin.settings.customAgents;
+    const active = this.plugin.settings.activeAgent;
+
+    // Default option
+    const defaultItem = menu.createDiv({
+      cls: `copilot-agent-item ${active === "" ? "active" : ""}`,
+    });
+    defaultItem.createSpan({ cls: "copilot-agent-item-name", text: "Default" });
+    defaultItem.createSpan({ cls: "copilot-agent-item-desc", text: "General assistant" });
+    defaultItem.addEventListener("click", () => this.selectAgent(""));
+
+    // Custom agents
+    agents.forEach((agent) => {
+      const item = menu.createDiv({
+        cls: `copilot-agent-item ${active === agent.name ? "active" : ""}`,
+      });
+      item.createSpan({ cls: "copilot-agent-item-name", text: agent.displayName });
+      item.createSpan({ cls: "copilot-agent-item-desc", text: agent.description });
+      item.addEventListener("click", () => this.selectAgent(agent.name));
+    });
+
+    // Position relative to the dropdown button
+    const rect = this.agentDropdownBtn.getBoundingClientRect();
+    const rootRect = this.containerEl.getBoundingClientRect();
+    menu.style.top = `${rect.bottom - rootRect.top + 4}px`;
+    menu.style.left = `${rect.left - rootRect.left}px`;
+
+    this.containerEl.children[1].appendChild(menu);
+
+    // Close on click outside
+    const closeHandler = (ev: MouseEvent) => {
+      if (!menu.contains(ev.target as Node)) {
+        menu.remove();
+        document.removeEventListener("click", closeHandler);
+      }
+    };
+    setTimeout(() => document.addEventListener("click", closeHandler), 0);
+  }
+
+  private async selectAgent(agentName: string): Promise<void> {
+    this.plugin.settings.activeAgent = agentName;
+    await this.plugin.saveSettings();
+    this.renderAgentDropdown();
+
+    // Remove menu
+    this.containerEl.querySelector(".copilot-agent-menu")?.remove();
+
+    // Reset session so the agent takes effect
+    if (this.plugin.clientManager?.getIsConnected()) {
+      await this.plugin.clientManager.updateSettings(this.plugin.settings);
+      new Notice(agentName ? `Switched to ${this.plugin.settings.customAgents.find(a => a.name === agentName)?.displayName}` : "Switched to Default");
+    }
   }
 
   async onClose(): Promise<void> {
