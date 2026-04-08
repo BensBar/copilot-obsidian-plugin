@@ -116,7 +116,7 @@ export class CopilotClientManager {
   private async reconnectInternal(): Promise<void> {
     // Clean up any existing client/session first
     try {
-      await this.session?.close?.();
+      await this.session?.disconnect?.();
       await this.client?.stop?.();
     } catch (_) {}
     this.session = null;
@@ -154,7 +154,7 @@ export class CopilotClientManager {
 
   private async createSession(sdkTools: any[]): Promise<void> {
     if (this.session) {
-      await this.session.close?.();
+      await this.session.disconnect?.();
       this.session = null;
     }
 
@@ -328,7 +328,7 @@ export class CopilotClientManager {
     this.reconnectAttempts = 0;
     this.stopHeartbeat();
     try {
-      await this.session?.close?.();
+      await this.session?.disconnect?.();
       await this.client?.stop?.();
     } catch (_) {
       // Ignore cleanup errors
