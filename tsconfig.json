@@ -4,7 +4,7 @@
     "inlineSources": true,
     "module": "ESNext",
     "target": "ES2018",
-    "moduleResolution": "node",
+    "moduleResolution": "node10",
     "importHelpers": true,
     "isolatedModules": true,
     "strictNullChecks": true,
