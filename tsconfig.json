@@ -5,6 +5,7 @@
     "module": "ESNext",
     "target": "ES2018",
     "moduleResolution": "node10",
+    "ignoreDeprecations": "6.0",
     "importHelpers": true,
     "isolatedModules": true,
     "strictNullChecks": true,
