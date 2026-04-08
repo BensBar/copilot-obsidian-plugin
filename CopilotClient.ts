@@ -453,6 +453,21 @@ export class CopilotClientManager {
     if (msg.includes("ENOENT") || msg.includes("not found")) {
       return "Copilot CLI not found. Install it with: npm install -g @github/copilot\nOr set a custom CLI path in plugin settings.";
     }
+    if (msg.includes("exited") && (msg.includes("null") || msg.includes("code null"))) {
+      return "Copilot CLI crashed on startup. This usually means Node.js can't run the CLI.\n\n" +
+        "Fix:\n" +
+        "1. Ensure Node.js 18+ is installed: node --version\n" +
+        "2. Reinstall the CLI: npm install -g @github/copilot\n" +
+        "3. Verify it works: npx @github/copilot --version\n" +
+        "4. If using NVM, make sure your default alias is set: nvm alias default node";
+    }
+    if (msg.includes("exited") && msg.includes("code")) {
+      return "Copilot CLI exited unexpectedly.\n\n" +
+        "Try:\n" +
+        "1. npm install -g @github/copilot\n" +
+        "2. Verify: npx @github/copilot --version\n" +
+        (msg.includes("stderr") ? `\nCLI output: ${msg.split("stderr:")[1]?.trim() ?? ""}` : "");
+    }
     if (msg.includes("auth") || msg.includes("login") || msg.includes("401")) {
       return "Not authenticated with GitHub. Run `copilot /login` in your terminal first.";
     }
