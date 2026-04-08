@@ -61,7 +61,8 @@ export const DEFAULT_SETTINGS: CopilotPluginSettings = {
 };
 
 export const AVAILABLE_MODELS = [
-  { value: "claude-sonnet-4-5", label: "Claude Sonnet 4.5 (Default)" },
+  { value: "", label: "Default (auto)" },
+  { value: "claude-sonnet-4.5", label: "Claude Sonnet 4.5" },
   { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
   { value: "gpt-5", label: "GPT-5" },
   { value: "gpt-4.1", label: "GPT-4.1" },

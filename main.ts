@@ -147,7 +147,9 @@ export default class CopilotPlugin extends Plugin {
       this.getOpenViews().forEach((v) => v.refreshManager());
       return true;
     } catch (err: any) {
-      new Notice(`⚠️ Copilot: ${err.message}`, 8000);
+      if (err.message) {
+        new Notice(`⚠️ Copilot: ${err.message}`, 8000);
+      }
       this.getOpenViews().forEach((v) => v.updateStatusBar());
       return false;
     }
