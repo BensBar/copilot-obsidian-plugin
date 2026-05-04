@@ -7,9 +7,11 @@ import {
   Notice,
 } from "obsidian";
 import type CopilotPlugin from "./main";
-import { COPILOT_VIEW_TYPE } from "./types";
+import { COPILOT_VIEW_TYPE, AVAILABLE_MODELS } from "./types";
 import type { ChatMessage, CustomAgent } from "./types";
 import type { ConnectionState } from "./CopilotClient";
+import { SLASH_COMMANDS, filterCommands, longestCommonPrefix } from "./commands";
+import type { SlashCommand } from "./commands";
 
 export class CopilotChatView extends ItemView {
   private plugin: CopilotPlugin;
@@ -22,6 +24,11 @@ export class CopilotChatView extends ItemView {
   private reconnectBannerEl: HTMLElement | null = null;
   private isGenerating = false;
   private thinkingIntervalId: ReturnType<typeof setInterval> | null = null;
+
+  // ── Slash command popup state ──────────────────────────────────────────
+  private slashPopupEl: HTMLElement | null = null;
+  private slashMatches: SlashCommand[] = [];
+  private slashSelectedIdx = 0;
 
   private static readonly THINKING_MESSAGES = [
     "Thinking…",
@@ -140,23 +147,65 @@ export class CopilotChatView extends ItemView {
     this.inputEl = inputWrapper.createEl("textarea", {
       cls: "copilot-input",
       attr: {
-        placeholder: "Ask Copilot anything…",
+        placeholder: "Ask Copilot anything…  (try /help)",
         rows: "1",
       },
     });
 
-    // Auto-resize textarea
+    // Auto-resize textarea + slash popup updates
     this.inputEl.addEventListener("input", () => {
       this.inputEl.style.height = "auto";
       this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 160) + "px";
+      this.updateSlashPopup();
     });
 
-    // Send on Enter (Shift+Enter for newline)
+    // Keyboard handling: slash popup nav + send
     this.inputEl.addEventListener("keydown", (e: KeyboardEvent) => {
+      // Slash popup is open — intercept nav keys first
+      if (this.slashPopupEl) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          this.slashSelectedIdx = (this.slashSelectedIdx + 1) % this.slashMatches.length;
+          this.renderSlashPopup();
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          this.slashSelectedIdx =
+            (this.slashSelectedIdx - 1 + this.slashMatches.length) % this.slashMatches.length;
+          this.renderSlashPopup();
+          return;
+        }
+        if (e.key === "Tab") {
+          e.preventDefault();
+          this.handleSlashTab();
+          return;
+        }
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          this.applySlashCompletion(this.slashMatches[this.slashSelectedIdx]);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          this.closeSlashPopup();
+          return;
+        }
+      }
+
+      // Normal send
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         this.handleSend();
       }
+    });
+
+    // Close popup if focus leaves the input
+    this.inputEl.addEventListener("blur", () => {
+      // Delay so a click on a popup item still registers
+      setTimeout(() => {
+        if (document.activeElement !== this.inputEl) this.closeSlashPopup();
+      }, 150);
     });
 
     // Send button
@@ -193,6 +242,13 @@ export class CopilotChatView extends ItemView {
   private async handleSend(): Promise<void> {
     const content = this.inputEl.value.trim();
     if (!content || this.isGenerating) return;
+
+    // Intercept slash commands before any connection checks so local actions
+    // (e.g. /clear, /help) work even when offline.
+    if (content.startsWith("/")) {
+      const handled = await this.tryRunSlashCommand(content);
+      if (handled) return;
+    }
 
     const manager = this.plugin.clientManager;
     if (!manager) {
@@ -501,6 +557,215 @@ export class CopilotChatView extends ItemView {
       this.sendBtn.disabled = false;
       this.updateStatusBar();
     }
+  }
+
+  // ── Slash commands ────────────────────────────────────────────────────
+
+  // Returns true when the input was a slash command (handled or shown as
+  // an error), in which case the caller must NOT send the message.
+  private async tryRunSlashCommand(raw: string): Promise<boolean> {
+    const stripped = raw.slice(1); // drop leading "/"
+    const spaceIdx = stripped.search(/\s/);
+    const name = (spaceIdx === -1 ? stripped : stripped.slice(0, spaceIdx)).toLowerCase();
+    const arg = spaceIdx === -1 ? "" : stripped.slice(spaceIdx + 1).trim();
+    const cmd = SLASH_COMMANDS.find((c) => c.name === name);
+
+    if (!cmd) {
+      // Unknown slash command — surface as a system message rather than
+      // silently sending it to the model.
+      this.addMessage({
+        role: "assistant",
+        content: `Unknown command \`/${name}\`. Type \`/help\` to see available commands.`,
+      });
+      this.inputEl.value = "";
+      this.inputEl.style.height = "auto";
+      return true;
+    }
+
+    // Local actions: handled here, no LLM round-trip
+    if (cmd.action) {
+      this.inputEl.value = "";
+      this.inputEl.style.height = "auto";
+      this.closeSlashPopup();
+      await this.runSlashAction(cmd.action, arg);
+      return true;
+    }
+
+    // Prompt expansion: rewrite the textarea, fall through to normal send
+    if (cmd.prompt) {
+      const expanded = cmd.prompt.replace("{arg}", arg || "the topic above");
+      this.inputEl.value = expanded;
+      this.closeSlashPopup();
+      // Re-trigger handleSend with the expanded prompt
+      await this.handleSend();
+      return true;
+    }
+
+    return false;
+  }
+
+  private async runSlashAction(action: string, arg: string): Promise<void> {
+    switch (action) {
+      case "clear":
+        await this.resetSession();
+        return;
+
+      case "settings":
+        // @ts-ignore
+        this.app.setting.open();
+        // @ts-ignore
+        this.app.setting.openTabById("obsidian-copilot");
+        return;
+
+      case "help": {
+        const lines = SLASH_COMMANDS.map((c) => {
+          const hint = c.argHint ? ` ${c.argHint}` : "";
+          return `- \`/${c.name}${hint}\` — ${c.description}`;
+        }).join("\n");
+        this.addMessage({
+          role: "assistant",
+          content: `**Slash commands**\n\n${lines}`,
+        });
+        return;
+      }
+
+      case "agent": {
+        if (!arg) {
+          const names = this.plugin.settings.customAgents.map((a) => a.name).join(", ") || "(none)";
+          this.addMessage({
+            role: "assistant",
+            content: `Usage: \`/agent <name>\` or \`/agent default\`.\nAvailable: ${names}`,
+          });
+          return;
+        }
+        if (arg === "default" || arg === "none") {
+          await this.selectAgent("");
+          return;
+        }
+        const match = this.plugin.settings.customAgents.find(
+          (a) => a.name.toLowerCase() === arg.toLowerCase(),
+        );
+        if (!match) {
+          this.addMessage({
+            role: "assistant",
+            content: `No agent named \`${arg}\`. Configure agents in settings.`,
+          });
+          return;
+        }
+        await this.selectAgent(match.name);
+        return;
+      }
+
+      case "model": {
+        if (!arg) {
+          const names = AVAILABLE_MODELS.map((m) => m.value).join(", ");
+          this.addMessage({
+            role: "assistant",
+            content: `Usage: \`/model <id>\`.\nAvailable: ${names}\nCurrent: \`${this.plugin.settings.model}\``,
+          });
+          return;
+        }
+        const match = AVAILABLE_MODELS.find((m) => m.value.toLowerCase() === arg.toLowerCase());
+        if (!match) {
+          this.addMessage({
+            role: "assistant",
+            content: `Unknown model \`${arg}\`. Available: ${AVAILABLE_MODELS.map((m) => m.value).join(", ")}`,
+          });
+          return;
+        }
+        this.plugin.settings.model = match.value;
+        await this.plugin.saveSettings();
+        if (this.plugin.clientManager?.getIsConnected()) {
+          await this.plugin.clientManager.updateSettings(this.plugin.settings);
+        }
+        new Notice(`Model: ${match.label}`);
+        return;
+      }
+    }
+  }
+
+  // ── Slash popup ───────────────────────────────────────────────────────
+
+  private updateSlashPopup(): void {
+    const value = this.inputEl.value;
+    // Only trigger when the input begins with "/" and there's no space yet
+    // (i.e. we're still typing the command name itself).
+    if (!value.startsWith("/") || /\s/.test(value)) {
+      this.closeSlashPopup();
+      return;
+    }
+    const query = value.slice(1);
+    const matches = filterCommands(query);
+    if (matches.length === 0) {
+      this.closeSlashPopup();
+      return;
+    }
+    this.slashMatches = matches;
+    this.slashSelectedIdx = 0;
+    this.renderSlashPopup();
+  }
+
+  private renderSlashPopup(): void {
+    if (!this.slashPopupEl) {
+      // Mount inside the input area so it sits directly above the textarea
+      const inputArea = this.inputEl.closest(".copilot-input-area") as HTMLElement | null;
+      if (!inputArea) return;
+      this.slashPopupEl = inputArea.createDiv("copilot-slash-popup");
+      // Insert as the first child so it renders above the input
+      inputArea.insertBefore(this.slashPopupEl, inputArea.firstChild);
+    }
+    this.slashPopupEl.empty();
+    this.slashMatches.forEach((cmd, idx) => {
+      const item = this.slashPopupEl!.createDiv({
+        cls: "copilot-slash-item" + (idx === this.slashSelectedIdx ? " is-selected" : ""),
+      });
+      const left = item.createDiv("copilot-slash-item-left");
+      const nameEl = left.createSpan({ cls: "copilot-slash-name", text: `/${cmd.name}` });
+      if (cmd.argHint) {
+        nameEl.createSpan({ cls: "copilot-slash-arg", text: ` ${cmd.argHint}` });
+      }
+      item.createSpan({ cls: "copilot-slash-desc", text: cmd.description });
+
+      // Mousedown (not click) so it fires before the input's blur handler
+      item.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        this.applySlashCompletion(cmd);
+      });
+    });
+  }
+
+  private handleSlashTab(): void {
+    if (this.slashMatches.length === 0) return;
+    // If there's a unique match OR the user has navigated to a specific
+    // item, complete to that command's full name. Otherwise complete to
+    // the longest common prefix among matches.
+    if (this.slashMatches.length === 1) {
+      this.applySlashCompletion(this.slashMatches[0]);
+      return;
+    }
+    const currentQuery = this.inputEl.value.slice(1);
+    const lcp = longestCommonPrefix(this.slashMatches.map((c) => c.name));
+    if (lcp.length > currentQuery.length) {
+      this.inputEl.value = "/" + lcp;
+      this.updateSlashPopup();
+    } else {
+      this.applySlashCompletion(this.slashMatches[this.slashSelectedIdx]);
+    }
+  }
+
+  private applySlashCompletion(cmd: SlashCommand): void {
+    this.inputEl.value = "/" + cmd.name + (cmd.argHint ? " " : "");
+    this.inputEl.focus();
+    this.closeSlashPopup();
+    // For commands with no arg, send immediately on completion via Enter.
+    // We don't auto-send here — let the user confirm with Enter.
+  }
+
+  private closeSlashPopup(): void {
+    this.slashPopupEl?.remove();
+    this.slashPopupEl = null;
+    this.slashMatches = [];
+    this.slashSelectedIdx = 0;
   }
 
   // ── Register callbacks on the active client manager ───────────────────
