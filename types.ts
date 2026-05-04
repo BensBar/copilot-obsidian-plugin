@@ -15,6 +15,9 @@ export interface CopilotPluginSettings {
   streamResponses: boolean;
   autoContextActiveNote: boolean;
 
+  // Integrations
+  enableWorkIQ: boolean;
+
   // Agents
   customAgents: CustomAgent[];
   activeAgent: string; // name of active agent, "" = default (no agent)
@@ -34,6 +37,7 @@ export const DEFAULT_SETTINGS: CopilotPluginSettings = {
     "You are a knowledgeable AI assistant embedded in Obsidian. You help the user manage their personal knowledge base, draft notes, summarize content, connect ideas, and answer questions. Be concise, thoughtful, and markdown-aware.",
   streamResponses: true,
   autoContextActiveNote: false,
+  enableWorkIQ: false,
   customAgents: [
     {
       name: "writer",
