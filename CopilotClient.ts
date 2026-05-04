@@ -268,6 +268,10 @@ export class CopilotClientManager {
         content: this.settings.systemMessage,
       },
       ...(customAgents.length > 0 ? { customAgents } : {}),
+      // Auto-discover .mcp.json / .vscode/mcp.json and skill dirs from cwd
+      // (added in @github/copilot-sdk@0.2.2). Lets users drop an MCP config
+      // into their vault without per-plugin wiring.
+      enableConfigDiscovery: true,
       onPermissionRequest: approveAll,
     });
   }
