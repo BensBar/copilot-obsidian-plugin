@@ -133,6 +133,7 @@ export class CopilotClientManager {
   private session: CopilotSessionInstance | null = null;
   private settings: CopilotPluginSettings;
   private tools: any[];
+  private vaultPath: string | null;
   private isConnected = false;
 
   // ── Auto-reconnect / heartbeat state ──────────────────────────────────
@@ -156,9 +157,10 @@ export class CopilotClientManager {
     }
   };
 
-  constructor(settings: CopilotPluginSettings, tools: any[]) {
+  constructor(settings: CopilotPluginSettings, tools: any[], vaultPath: string | null = null) {
     this.settings = settings;
     this.tools = tools;
+    this.vaultPath = vaultPath;
     window.addEventListener("unhandledrejection", this.rejectionHandler);
   }
 
@@ -268,9 +270,16 @@ export class CopilotClientManager {
         content: this.settings.systemMessage,
       },
       ...(customAgents.length > 0 ? { customAgents } : {}),
-      // Auto-discover .mcp.json / .vscode/mcp.json and skill dirs from cwd
-      // (added in @github/copilot-sdk@0.2.2). Lets users drop an MCP config
-      // into their vault without per-plugin wiring.
+      // Pin the session cwd to the vault so MCP config discovery (.mcp.json,
+      // .vscode/mcp.json) and skill dirs resolve relative to the user's vault
+      // rather than Obsidian's app dir. Personal/home-scope MCP servers
+      // (e.g. ~/.copilot/mcp-config.json with work-iq) are still merged in
+      // by the SDK's discovery layer.
+      ...(this.vaultPath ? { workingDirectory: this.vaultPath } : {}),
+      // Auto-discover .mcp.json / .vscode/mcp.json and skill dirs from the
+      // working directory plus personal/home sources. This is what lets
+      // work-iq and other MCP servers configured via `copilot` CLI become
+      // available inside the plugin without per-plugin wiring.
       enableConfigDiscovery: true,
       onPermissionRequest: approveAll,
     });

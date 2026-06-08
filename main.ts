@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, Notice, addIcon, MarkdownView } from "obsidian";
+import { Plugin, WorkspaceLeaf, Notice, addIcon, MarkdownView, FileSystemAdapter } from "obsidian";
 import { CopilotChatView } from "./CopilotChatView";
 import { CopilotClientManager } from "./CopilotClient";
 import { CopilotSettingTab } from "./CopilotSettingTab";
@@ -129,6 +129,18 @@ export default class CopilotPlugin extends Plugin {
     await this.clientManager?.disconnect();
   }
 
+  // Returns the absolute filesystem path of the vault on desktop, or null
+  // on mobile / non-FS adapters. Passed to the Copilot SDK so MCP config
+  // discovery (.mcp.json, .vscode/mcp.json) and skill dirs resolve against
+  // the user's vault rather than Obsidian's app dir.
+  private getVaultPath(): string | null {
+    const adapter = this.app.vault.adapter;
+    if (adapter instanceof FileSystemAdapter) {
+      return adapter.getBasePath();
+    }
+    return null;
+  }
+
   // ── Connection management ─────────────────────────────────────────────
   async connect(): Promise<boolean> {
     try {
@@ -140,7 +152,7 @@ export default class CopilotPlugin extends Plugin {
         await this.clientManager.disconnect();
       }
 
-      this.clientManager = new CopilotClientManager(this.settings, tools);
+      this.clientManager = new CopilotClientManager(this.settings, tools, this.getVaultPath());
       await this.clientManager.connect();
 
       // Update all open view status bars and re-register manager callbacks
