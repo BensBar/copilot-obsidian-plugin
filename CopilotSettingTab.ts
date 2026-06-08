@@ -129,6 +129,33 @@ export class CopilotSettingTab extends PluginSettingTab {
           })
       );
 
+    // ── Integrations ──────────────────────────────────────────────────────
+    containerEl.createEl("h3", { text: "Integrations", cls: "copilot-settings-section" });
+
+    const workIQDesc = document.createDocumentFragment();
+    workIQDesc.append(
+      "Connect Microsoft Work IQ so Copilot can answer questions about your M365 email, calendar, Teams, and files. ",
+      "Requires the workiq CLI installed and signed in: ",
+    );
+    const code = workIQDesc.createEl("code", { text: "npx -y @microsoft/workiq accept-eula" });
+    code.style.userSelect = "all";
+    workIQDesc.append(", then ");
+    const code2 = workIQDesc.createEl("code", { text: "workiq ask hello" });
+    code2.style.userSelect = "all";
+    workIQDesc.append(" to trigger the Microsoft 365 sign-in prompt. Toggling this restarts the chat session.");
+
+    new Setting(containerEl)
+      .setName("Microsoft Work IQ")
+      .setDesc(workIQDesc)
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.enableWorkIQ)
+          .onChange(async (value) => {
+            this.plugin.settings.enableWorkIQ = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
     // ── Agents ─────────────────────────────────────────────────────────────
     containerEl.createEl("h3", { text: "Agents", cls: "copilot-settings-section" });
 

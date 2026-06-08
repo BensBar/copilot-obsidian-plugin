@@ -261,6 +261,20 @@ export class CopilotClientManager {
       tools: null, // all tools available
     }));
 
+    // Built-in MCP server integrations toggled from plugin settings.
+    // Microsoft Work IQ exposes the user's M365 data (email, calendar,
+    // Teams, files) over the MCP stdio protocol. The package handles its
+    // own auth — users must run `workiq accept-eula` and sign in via
+    // their terminal once before enabling this toggle.
+    const mcpServers: Record<string, any> = {};
+    if (this.settings.enableWorkIQ) {
+      mcpServers.workiq = {
+        type: "stdio",
+        command: "npx",
+        args: ["-y", "@microsoft/workiq@latest", "mcp"],
+      };
+    }
+
     this.session = await this.client.createSession({
       ...(this.settings.model ? { model: this.settings.model } : {}),
       streaming: this.settings.streamResponses,
@@ -270,16 +284,18 @@ export class CopilotClientManager {
         content: this.settings.systemMessage,
       },
       ...(customAgents.length > 0 ? { customAgents } : {}),
+      ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
       // Pin the session cwd to the vault so MCP config discovery (.mcp.json,
       // .vscode/mcp.json) and skill dirs resolve relative to the user's vault
       // rather than Obsidian's app dir. Personal/home-scope MCP servers
-      // (e.g. ~/.copilot/mcp-config.json with work-iq) are still merged in
-      // by the SDK's discovery layer.
+      // (e.g. ~/.copilot/mcp-config.json) are still merged in by the SDK's
+      // discovery layer.
       ...(this.vaultPath ? { workingDirectory: this.vaultPath } : {}),
       // Auto-discover .mcp.json / .vscode/mcp.json and skill dirs from the
       // working directory plus personal/home sources. This is what lets
-      // work-iq and other MCP servers configured via `copilot` CLI become
-      // available inside the plugin without per-plugin wiring.
+      // work-iq (when toggled above) and any other MCP servers configured
+      // via `copilot` CLI become available inside the plugin without
+      // per-plugin wiring.
       enableConfigDiscovery: true,
       onPermissionRequest: approveAll,
     });
@@ -419,9 +435,10 @@ export class CopilotClientManager {
   async updateSettings(newSettings: CopilotPluginSettings): Promise<void> {
     const modelChanged = newSettings.model !== this.settings.model;
     const systemChanged = newSettings.systemMessage !== this.settings.systemMessage;
+    const workIQChanged = newSettings.enableWorkIQ !== this.settings.enableWorkIQ;
     this.settings = newSettings;
 
-    if ((modelChanged || systemChanged) && this.isConnected && this.client) {
+    if ((modelChanged || systemChanged || workIQChanged) && this.isConnected && this.client) {
       await this.resetSession();
     }
   }
