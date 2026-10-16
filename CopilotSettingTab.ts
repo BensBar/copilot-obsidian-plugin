@@ -60,7 +60,7 @@ export class CopilotSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("AI model")
-      .setDesc("The model used for all Copilot interactions. Changes apply on next session reset.")
+      .setDesc("The model used for all Copilot interactions. Changes keep the current conversation when supported.")
       .addDropdown((drop: DropdownComponent) => {
         AVAILABLE_MODELS.forEach((m) => drop.addOption(m.value, m.label));
         drop.setValue(this.plugin.settings.model);
@@ -112,6 +112,27 @@ export class CopilotSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.autoContextActiveNote = value;
             await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Allow shell commands")
+      .setDesc(
+        "Let the agent run shell commands via the run_shell_command tool. " +
+        "Useful for installing MCP servers (e.g. `npm install -g ...`), checking tool availability, " +
+        "and running git. Commands inherit your login-shell PATH and run from the vault directory. " +
+        "Disable if you don't want the model to execute commands on your machine."
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.enableShellTool)
+          .onChange(async (value) => {
+            this.plugin.settings.enableShellTool = value;
+            await this.plugin.saveSettings();
+            // Reconnect so the tool set picks up the change
+            if (this.plugin.clientManager?.getIsConnected()) {
+              await this.plugin.connect();
+            }
           })
       );
 
@@ -215,7 +236,7 @@ export class CopilotSettingTab extends PluginSettingTab {
 
     const about = containerEl.createDiv("copilot-settings-about");
     about.createEl("p", {
-      text: "This plugin uses the GitHub Copilot SDK (Technical Preview). Copilot CLI must be installed separately and authenticated with your GitHub account. Each prompt consumes one premium request from your Copilot plan.",
+      text: "This plugin uses the GitHub Copilot SDK and requires Copilot CLI 1.0.96 or newer, installed separately and authenticated with your GitHub account. Each prompt consumes premium requests according to your Copilot plan.",
     });
     const link = about.createEl("a", {
       text: "→ GitHub Copilot CLI docs",
