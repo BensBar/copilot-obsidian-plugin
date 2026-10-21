@@ -8,7 +8,7 @@ import {
 } from "obsidian";
 import type CopilotPlugin from "./main";
 import { COPILOT_VIEW_TYPE, AVAILABLE_MODELS } from "./types";
-import type { ChatMessage, CustomAgent } from "./types";
+import type { ChatMessage, CustomAgent, ModelOption } from "./types";
 import type { ConnectionState } from "./CopilotClient";
 import { SLASH_COMMANDS, filterCommands, longestCommonPrefix } from "./commands";
 import type { SlashCommand } from "./commands";
@@ -21,9 +21,16 @@ export class CopilotChatView extends ItemView {
   private sendBtn!: HTMLButtonElement;
   private statusBar!: HTMLElement;
   private agentDropdownBtn!: HTMLElement;
+  private modelDropdownBtn!: HTMLElement;
   private reconnectBannerEl: HTMLElement | null = null;
   private isGenerating = false;
   private thinkingIntervalId: ReturnType<typeof setInterval> | null = null;
+
+  // Live model list (from client.listModels()), defaulting to the hardcoded
+  // fallback until the first fetch succeeds. Lets renderModelDropdown stay sync.
+  private cachedModels: ModelOption[] = AVAILABLE_MODELS;
+  // Last known auth status, surfaced in the status bar.
+  private authInfo: { isAuthenticated: boolean; login?: string; host?: string } | null = null;
 
   // ── Slash command popup state ──────────────────────────────────────────
   private slashPopupEl: HTMLElement | null = null;
@@ -72,7 +79,7 @@ export class CopilotChatView extends ItemView {
 
   // ── Build the UI ──────────────────────────────────────────────────────
   async onOpen(): Promise<void> {
-    const root = this.containerEl.children[1] as HTMLElement;
+    const root = this.contentEl;
     root.empty();
     root.addClass("copilot-chat-root");
 
@@ -85,6 +92,14 @@ export class CopilotChatView extends ItemView {
     // ── Agent dropdown ────────────────────────────────────────────────────
     this.agentDropdownBtn = toolbar.createDiv("copilot-agent-dropdown");
     this.renderAgentDropdown();
+
+    // ── Model dropdown ────────────────────────────────────────────────────
+    this.modelDropdownBtn = toolbar.createDiv("copilot-agent-dropdown copilot-model-dropdown");
+    this.modelDropdownBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      void this.showModelMenu();
+    });
+    this.renderModelDropdown();
 
     const actions = toolbar.createDiv("copilot-toolbar-actions");
 
@@ -125,7 +140,7 @@ export class CopilotChatView extends ItemView {
       // @ts-ignore
       this.app.setting.open();
       // @ts-ignore
-      this.app.setting.openTabById("obsidian-copilot");
+      this.app.setting.openTabById(this.plugin.manifest.id);
     });
 
     // ── Status bar ───────────────────────────────────────────────────────
@@ -208,10 +223,13 @@ export class CopilotChatView extends ItemView {
       }, 150);
     });
 
-    // Send button
+    // Send button — doubles as a Stop button while generating.
     this.sendBtn = inputWrapper.createEl("button", { cls: "copilot-send-btn" });
     setIcon(this.sendBtn, "send");
-    this.sendBtn.addEventListener("click", () => this.handleSend());
+    this.sendBtn.addEventListener("click", () => {
+      if (this.isGenerating) this.abortGeneration();
+      else this.handleSend();
+    });
 
     // Quick action pills
     const pills = inputArea.createDiv("copilot-pills");
@@ -294,7 +312,7 @@ export class CopilotChatView extends ItemView {
     const assistantId = this.addMessage({ role: "assistant", content: "", isStreaming: true });
 
     this.isGenerating = true;
-    this.sendBtn.disabled = true;
+    this.setSendButtonMode("stop");
     this.startThinkingMessages();
 
     let streamBuffer = "";
@@ -310,7 +328,7 @@ export class CopilotChatView extends ItemView {
       (fullContent: string) => {
         this.finalizeMessage(assistantId, fullContent || streamBuffer);
         this.isGenerating = false;
-        this.sendBtn.disabled = false;
+        this.setSendButtonMode("send");
         this.stopThinkingMessages();
         this.trimHistory();
       },
@@ -325,10 +343,38 @@ export class CopilotChatView extends ItemView {
           this.finalizeMessage(assistantId, `❌ ${error.message}`, true);
         }
         this.isGenerating = false;
-        this.sendBtn.disabled = false;
+        this.setSendButtonMode("send");
         this.stopThinkingMessages();
       }
     );
+  }
+
+  // ── Stop button helpers (T3) ──────────────────────────────────────────
+  // Swap the send button between "send" and "stop" affordances. The button
+  // stays enabled in stop mode so the user can cancel a long generation.
+  private setSendButtonMode(mode: "send" | "stop"): void {
+    if (!this.sendBtn) return;
+    this.sendBtn.disabled = false;
+    setIcon(this.sendBtn, mode === "stop" ? "square" : "send");
+    this.sendBtn.toggleClass("is-stopping", mode === "stop");
+    this.sendBtn.setAttribute("aria-label", mode === "stop" ? "Stop generating" : "Send");
+  }
+
+  private async abortGeneration(): Promise<void> {
+    const manager = this.plugin.clientManager;
+    if (!manager) return;
+    await manager.abort();
+    // session.abort() fires session.idle, so the manager's onDone is the single
+    // canonical finalizer (it preserves the partial reply and resets the
+    // button). Safety net only: if no idle event arrives, reset the UI here so
+    // the button isn't stuck in "stop" mode. Deferred so we don't double-run.
+    window.setTimeout(() => {
+      if (this.isGenerating) {
+        this.isGenerating = false;
+        this.setSendButtonMode("send");
+        this.stopThinkingMessages();
+      }
+    }, 1500);
   }
 
   // ── Message rendering ─────────────────────────────────────────────────
@@ -531,7 +577,7 @@ export class CopilotChatView extends ItemView {
       // @ts-ignore
       this.app.setting.open();
       // @ts-ignore
-      this.app.setting.openTabById("obsidian-copilot");
+      this.app.setting.openTabById(this.plugin.manifest.id);
     });
   }
 
@@ -548,6 +594,7 @@ export class CopilotChatView extends ItemView {
       this.hideReconnectBanner();
       if (!this.isGenerating) this.sendBtn.disabled = false;
       this.updateStatusBar();
+      void this.refreshHealth();
     } else if (state === "reconnecting") {
       this.showReconnectingBanner();
       this.sendBtn.disabled = true;
@@ -614,7 +661,7 @@ export class CopilotChatView extends ItemView {
         // @ts-ignore
         this.app.setting.open();
         // @ts-ignore
-        this.app.setting.openTabById("obsidian-copilot");
+        this.app.setting.openTabById(this.plugin.manifest.id);
         return;
 
       case "help": {
@@ -657,28 +704,39 @@ export class CopilotChatView extends ItemView {
       }
 
       case "model": {
+        // Prefer the live SDK model list; fall back to cached/hardcoded.
+        let models = this.cachedModels;
+        if (this.plugin.clientManager?.getIsConnected()) {
+          try {
+            models = await this.plugin.clientManager.listModels();
+            this.cachedModels = models;
+          } catch (_) { /* keep cached */ }
+        }
+        const selectable = models.filter((m) => m.value);
         if (!arg) {
-          const names = AVAILABLE_MODELS.map((m) => m.value).join(", ");
+          const names = selectable
+            .map((m) => {
+              const badge = this.formatMultiplier(m.multiplier);
+              return badge ? `${m.value} (${badge})` : m.value;
+            })
+            .join(", ");
           this.addMessage({
             role: "assistant",
-            content: `Usage: \`/model <id>\`.\nAvailable: ${names}\nCurrent: \`${this.plugin.settings.model}\``,
+            content: `Usage: \`/model <id>\`.\nAvailable: ${names}\nCurrent: \`${this.plugin.settings.model || "default"}\``,
           });
           return;
         }
-        const match = AVAILABLE_MODELS.find((m) => m.value.toLowerCase() === arg.toLowerCase());
+        const match = models.find((m) => m.value && m.value.toLowerCase() === arg.toLowerCase());
         if (!match) {
           this.addMessage({
             role: "assistant",
-            content: `Unknown model \`${arg}\`. Available: ${AVAILABLE_MODELS.map((m) => m.value).join(", ")}`,
+            content: `Unknown model \`${arg}\`. Available: ${selectable.map((m) => m.value).join(", ")}`,
           });
           return;
         }
-        this.plugin.settings.model = match.value;
-        await this.plugin.saveSettings();
-        if (this.plugin.clientManager?.getIsConnected()) {
-          await this.plugin.clientManager.updateSettings(this.plugin.settings);
-        }
-        new Notice(`Model: ${match.label}`);
+        // selectModel() handles persistence, dropdown refresh, in-place
+        // setModel() (history kept), and the confirmation notice.
+        await this.selectModel(match.value);
         return;
       }
     }
@@ -780,6 +838,25 @@ export class CopilotChatView extends ItemView {
     this.setupManagerCallbacks();
     this.hideReconnectBanner();
     this.updateStatusBar();
+    void this.refreshHealth();
+  }
+
+  // Fetch auth status + prefetch the live model list once connected, then
+  // refresh the status bar / model dropdown labels.
+  private async refreshHealth(): Promise<void> {
+    const manager = this.plugin.clientManager;
+    if (!manager?.getIsConnected()) return;
+    try {
+      const auth = await manager.getAuthStatus();
+      if (auth) {
+        this.authInfo = { isAuthenticated: !!auth.isAuthenticated, login: auth.login, host: auth.host };
+      }
+    } catch (_) { /* non-fatal */ }
+    try {
+      this.cachedModels = await manager.listModels();
+      this.renderModelDropdown();
+    } catch (_) { /* keep fallback list */ }
+    this.updateStatusBar();
   }
 
   private renderWelcome(): void {
@@ -864,10 +941,16 @@ export class CopilotChatView extends ItemView {
 
     const connected = this.plugin.clientManager?.getIsConnected() ?? false;
     const dot = this.statusBar.createSpan({ cls: `copilot-status-dot ${connected ? "connected" : "disconnected"}` });
-    const model = this.plugin.settings.model;
-    const label = connected
-      ? `${model}`
-      : "Disconnected — click to reconnect";
+    const model = this.plugin.settings.model || "default";
+    let label: string;
+    if (!connected) {
+      label = "Disconnected — click to reconnect";
+    } else if (this.authInfo && this.authInfo.isAuthenticated === false) {
+      label = "Not signed in — run: copilot /login";
+    } else {
+      const who = this.authInfo?.login ? ` · @${this.authInfo.login}` : "";
+      label = `${model}${who}`;
+    }
     this.statusBar.createSpan({ text: label, cls: "copilot-status-text" });
 
     if (!connected) {
@@ -934,7 +1017,7 @@ export class CopilotChatView extends ItemView {
     menu.style.top = `${rect.bottom - rootRect.top + 4}px`;
     menu.style.left = `${rect.left - rootRect.left}px`;
 
-    this.containerEl.children[1].appendChild(menu);
+    this.contentEl.appendChild(menu);
 
     // Close on click outside
     const closeHandler = (ev: MouseEvent) => {
@@ -961,7 +1044,118 @@ export class CopilotChatView extends ItemView {
     }
   }
 
+  // ── Model dropdown ────────────────────────────────────────────────────
+  // Renders synchronously off the cached list (cachedModels defaults to the
+  // hardcoded fallback and is refreshed live by showModelMenu()).
+  private renderModelDropdown(): void {
+    this.modelDropdownBtn.empty();
+    const current = this.plugin.settings.model;
+    const match =
+      this.cachedModels.find((m) => m.value === current) ??
+      AVAILABLE_MODELS.find((m) => m.value === current);
+    this.modelDropdownBtn.createSpan({
+      cls: "copilot-agent-label",
+      text: match?.label ?? (current || "Default"),
+    });
+    this.modelDropdownBtn.createSpan({ cls: "copilot-agent-chevron", text: "▾" });
+  }
+
+  // Formats a premium-request multiplier as a compact badge, e.g. "1×", "0.33×".
+  private formatMultiplier(multiplier?: number): string | null {
+    if (multiplier === undefined || multiplier === null) return null;
+    const rounded = Math.round(multiplier * 100) / 100;
+    return `${rounded}×`;
+  }
+
+  private async showModelMenu(): Promise<void> {
+    const existing = this.containerEl.querySelector(".copilot-model-menu");
+    if (existing) { existing.remove(); return; }
+
+    const menu = createDiv("copilot-agent-menu copilot-model-menu");
+    const current = this.plugin.settings.model;
+
+    const renderItems = (models: ModelOption[]) => {
+      menu.empty();
+      models.forEach((m) => {
+        const item = menu.createDiv({
+          cls: `copilot-agent-item ${current === m.value ? "active" : ""}`,
+        });
+        const nameRow = item.createDiv({ cls: "copilot-agent-item-name" });
+        nameRow.createSpan({ text: m.label });
+        const badge = this.formatMultiplier(m.multiplier);
+        if (badge) {
+          nameRow.createSpan({ cls: "copilot-model-multiplier", text: badge });
+        }
+        if (m.value && m.value !== m.label) {
+          item.createSpan({ cls: "copilot-agent-item-desc", text: m.value });
+        }
+        item.addEventListener("click", () => this.selectModel(m.value));
+      });
+    };
+
+    // Show the cached list immediately, then refresh from the live SDK list.
+    renderItems(this.cachedModels);
+
+    const rect = this.modelDropdownBtn.getBoundingClientRect();
+    const rootRect = this.containerEl.getBoundingClientRect();
+    menu.style.top = `${rect.bottom - rootRect.top + 4}px`;
+    menu.style.left = `${rect.left - rootRect.left}px`;
+    this.contentEl.appendChild(menu);
+
+    const closeHandler = (ev: MouseEvent) => {
+      if (!menu.contains(ev.target as Node)) {
+        menu.remove();
+        document.removeEventListener("click", closeHandler);
+      }
+    };
+    setTimeout(() => document.addEventListener("click", closeHandler), 0);
+
+    const manager = this.plugin.clientManager;
+    if (manager?.getIsConnected()) {
+      try {
+        const live = await manager.listModels();
+        this.cachedModels = live;
+        // Only re-render if the menu is still open.
+        if (menu.isConnected) renderItems(live);
+        this.renderModelDropdown();
+      } catch (_) {
+        // keep the cached/fallback list already shown
+      }
+    }
+  }
+
+  private async selectModel(modelValue: string): Promise<void> {
+    if (this.plugin.settings.model === modelValue) {
+      this.containerEl.querySelector(".copilot-model-menu")?.remove();
+      return;
+    }
+    this.plugin.settings.model = modelValue;
+    await this.plugin.saveSettings();
+    this.renderModelDropdown();
+    this.updateStatusBar();
+    this.containerEl.querySelector(".copilot-model-menu")?.remove();
+
+    const label =
+      this.cachedModels.find((m) => m.value === modelValue)?.label ??
+      AVAILABLE_MODELS.find((m) => m.value === modelValue)?.label ??
+      modelValue;
+
+    if (this.plugin.clientManager?.getIsConnected()) {
+      // setModel() switches in place and preserves conversation history
+      // (an empty value / Default falls back to a session reset internally).
+      await this.plugin.clientManager.setModel(modelValue);
+      new Notice(modelValue ? `Switched to ${label} — history kept` : "Switched to Default (auto)");
+    }
+  }
+
   async onClose(): Promise<void> {
     // Nothing to clean up — session is managed by the plugin
+  }
+
+  setInputValue(value: string): void {
+    if (!this.inputEl) return;
+    this.inputEl.value = value;
+    this.inputEl.dispatchEvent(new Event("input"));
+    this.inputEl.focus();
   }
 }

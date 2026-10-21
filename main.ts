@@ -1,6 +1,14 @@
-import { Plugin, WorkspaceLeaf, Notice, addIcon, MarkdownView, FileSystemAdapter } from "obsidian";
+import {
+  Plugin,
+  WorkspaceLeaf,
+  Notice,
+  addIcon,
+  MarkdownView,
+  FileSystemAdapter,
+  normalizePath,
+} from "obsidian";
 import { CopilotChatView } from "./CopilotChatView";
-import { CopilotClientManager } from "./CopilotClient";
+import { CopilotClientManager, resolveShellEnv } from "./CopilotClient";
 import { CopilotSettingTab } from "./CopilotSettingTab";
 import { buildVaultTools } from "./tools";
 import {
@@ -12,12 +20,21 @@ import {
 // Register a custom SVG icon for the sidebar
 const COPILOT_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
 
+const LEGACY_PLUGIN_ID = "obsidian-copilot";
+
 export default class CopilotPlugin extends Plugin {
   settings!: CopilotPluginSettings;
   clientManager: CopilotClientManager | null = null;
   lastActiveMarkdownView: MarkdownView | null = null;
 
   async onload(): Promise<void> {
+    // Build stamp — bump the tag whenever you ship a new build so you can
+    // confirm in the Obsidian DevTools console (Cmd+Opt+I) exactly which
+    // main.js is loaded. If you don't see this line after reloading, Obsidian
+    // is still running a stale copy of the plugin.
+    console.info(
+      `[Copilot] plugin loaded — v${this.manifest.version} build 2026-06-26c (vault instructions injected into system prompt)`
+    );
     await this.loadSettings();
 
     // Track the last focused MarkdownView so tools can still reference it
@@ -61,13 +78,7 @@ export default class CopilotPlugin extends Plugin {
         setTimeout(() => {
           const view = this.getActiveView();
           if (view) {
-            // @ts-ignore - access inputEl
-            const input = (view as any).inputEl as HTMLTextAreaElement;
-            if (input) {
-              input.value = `Explain this:\n\n\`\`\`\n${selected}\n\`\`\``;
-              input.dispatchEvent(new Event("input"));
-              input.focus();
-            }
+            view.setInputValue(`Explain this:\n\n\`\`\`\n${selected}\n\`\`\``);
           }
         }, 200);
       },
@@ -81,12 +92,7 @@ export default class CopilotPlugin extends Plugin {
         setTimeout(() => {
           const view = this.getActiveView();
           if (view) {
-            // @ts-ignore
-            const input = (view as any).inputEl as HTMLTextAreaElement;
-            if (input) {
-              input.value = "Summarize the active note concisely.";
-              input.dispatchEvent(new Event("input"));
-            }
+            view.setInputValue("Summarize the active note concisely.");
           }
         }, 200);
       },
@@ -144,15 +150,22 @@ export default class CopilotPlugin extends Plugin {
   // ── Connection management ─────────────────────────────────────────────
   async connect(): Promise<boolean> {
     try {
-      const tools = buildVaultTools(this.app, () =>
-        this.lastActiveMarkdownView ?? this.app.workspace.getActiveViewOfType(MarkdownView)
+      const vaultPath = this.getVaultPath();
+      const tools = buildVaultTools(
+        this.app,
+        () => this.lastActiveMarkdownView ?? this.app.workspace.getActiveViewOfType(MarkdownView),
+        {
+          enableShellTool: this.settings.enableShellTool,
+          shellEnv: this.settings.enableShellTool ? resolveShellEnv() : undefined,
+          cwd: vaultPath,
+        }
       );
 
       if (this.clientManager) {
         await this.clientManager.disconnect();
       }
 
-      this.clientManager = new CopilotClientManager(this.settings, tools, this.getVaultPath());
+      this.clientManager = new CopilotClientManager(this.settings, tools, vaultPath);
       await this.clientManager.connect();
 
       // Update all open view status bars and re-register manager callbacks
@@ -186,7 +199,8 @@ export default class CopilotPlugin extends Plugin {
       await leaf.setViewState({ type: COPILOT_VIEW_TYPE, active: true });
     }
 
-    workspace.revealLeaf(leaf);
+    await workspace.revealLeaf(leaf);
+    await leaf.loadIfDeferred?.();
   }
 
   private getOpenViews(): CopilotChatView[] {
@@ -202,7 +216,37 @@ export default class CopilotPlugin extends Plugin {
 
   // ── Settings ──────────────────────────────────────────────────────────
   async loadSettings(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const currentData = await this.loadData();
+    if (currentData !== null && currentData !== undefined) {
+      this.settings = Object.assign({}, DEFAULT_SETTINGS, currentData);
+      return;
+    }
+
+    const legacyPath = normalizePath(
+      `${this.app.vault.configDir}/plugins/${LEGACY_PLUGIN_ID}/data.json`
+    );
+    const adapter = this.app.vault.adapter;
+    try {
+      if (!(await adapter.exists(legacyPath))) {
+        this.settings = Object.assign({}, DEFAULT_SETTINGS);
+        return;
+      }
+
+      const legacyData: unknown = JSON.parse(await adapter.read(legacyPath));
+      if (!legacyData || typeof legacyData !== "object" || Array.isArray(legacyData)) {
+        throw new Error("Legacy settings file does not contain a JSON object.");
+      }
+
+      this.settings = Object.assign({}, DEFAULT_SETTINGS, legacyData);
+      await this.saveData(this.settings);
+      new Notice("GitHub Copilot settings were migrated. The original settings file was kept.");
+    } catch (error) {
+      console.error("[Copilot] Failed to migrate settings from the previous plugin ID.", error);
+      this.settings = Object.assign({}, DEFAULT_SETTINGS);
+      new Notice(
+        "Could not migrate GitHub Copilot settings. The original settings are preserved; check the console for details."
+      );
+    }
   }
 
   async saveSettings(): Promise<void> {

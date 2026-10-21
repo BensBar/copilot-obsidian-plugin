@@ -1,10 +1,16 @@
 import { Notice } from "obsidian";
 // @ts-ignore – esbuild will bundle this ESM package into the CJS output
-import { CopilotClient as CopilotClientSDK, defineTool, approveAll } from "@github/copilot-sdk";
+import {
+  CopilotClient as CopilotClientSDK,
+  RuntimeConnection,
+  defineTool,
+  approveAll,
+} from "@github/copilot-sdk";
 import { execSync, execFileSync } from "child_process";
 import { existsSync } from "fs";
 import { join } from "path";
-import type { CopilotPluginSettings, ChatMessage } from "./types";
+import type { CopilotPluginSettings, ChatMessage, ModelOption } from "./types";
+import { AVAILABLE_MODELS } from "./types";
 
 export type ConnectionState = "connected" | "reconnecting" | "failed";
 
@@ -12,7 +18,7 @@ export type ConnectionState = "connected" | "reconnecting" | "failed";
 // Obsidian on macOS doesn't inherit the user's shell PATH (especially NVM),
 // so bare command names like "copilot" fail existsSync and spawn.
 // We run `which` through a login shell so it picks up ~/.zshrc / ~/.bashrc.
-function resolveShellEnv(): Record<string, string> {
+export function resolveShellEnv(): Record<string, string> {
   // Obsidian/Electron doesn't inherit the interactive shell environment,
   // so `node`, NVM paths, etc. are missing from PATH.  Capture the real
   // login-shell environment once and hand it to the SDK so the spawned
@@ -136,6 +142,17 @@ export class CopilotClientManager {
   private vaultPath: string | null;
   private isConnected = false;
 
+  // Cached live model list from client.listModels(); cleared on reconnect.
+  private modelsCache: ModelOption[] | null = null;
+
+  // Snapshot of what was last applied to the live session. We can't compare
+  // against `this.settings` because the plugin hands us the SAME settings
+  // object it mutates in place, so `newSettings.x !== this.settings.x` is
+  // always false. Tracking applied values here makes change-detection correct.
+  private appliedModel: string;
+  private appliedSystemMessage: string;
+  private appliedWorkIQ: boolean;
+
   // ── Auto-reconnect / heartbeat state ──────────────────────────────────
   private heartbeatIntervalId: ReturnType<typeof setInterval> | null = null;
   private reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -161,6 +178,9 @@ export class CopilotClientManager {
     this.settings = settings;
     this.tools = tools;
     this.vaultPath = vaultPath;
+    this.appliedModel = settings.model;
+    this.appliedSystemMessage = settings.systemMessage;
+    this.appliedWorkIQ = settings.enableWorkIQ;
     window.addEventListener("unhandledrejection", this.rejectionHandler);
   }
 
@@ -215,17 +235,22 @@ export class CopilotClientManager {
     // The SDK needs @github/copilot/index.js (which supports --headless
     // --stdio).  Resolve it at runtime so the plugin works on any machine.
     const shellEnv = resolveShellEnv();
-    const clientOptions: any = { env: shellEnv };
 
+    // Resolve the CLI path first so we can inject it via BOTH the env var
+    // (COPILOT_CLI_PATH, which the SDK reads in client.js line ~268) and the
+    // connection option. The SDK silently ignores `cliPath`, so relying on it
+    // alone produces "Could not find @github/copilot package" errors inside
+    // Electron, where the global package isn't resolvable.
+    let resolvedCliPath: string | undefined;
     const customCLI = this.settings.cliPath?.trim();
     if (customCLI && customCLI !== "copilot") {
-      clientOptions.cliPath = customCLI.startsWith("/")
+      resolvedCliPath = customCLI.startsWith("/")
         ? customCLI
         : resolveCLIPath(customCLI, shellEnv);
     } else {
       const bundled = resolveBundledCLI(shellEnv);
       if (bundled) {
-        clientOptions.cliPath = bundled;
+        resolvedCliPath = bundled;
       } else {
         throw new Error(
           "@github/copilot package not found. Install it globally:\n" +
@@ -235,6 +260,27 @@ export class CopilotClientManager {
       }
     }
 
+    // Inject into env BEFORE building clientOptions so the SDK fallback
+    // (effectiveEnv.COPILOT_CLI_PATH) picks it up even if `connection` is
+    // ignored by older/newer SDK versions.
+    shellEnv.COPILOT_CLI_PATH = resolvedCliPath;
+
+    const clientOptions: any = {
+      // Use the SDK's current connection factory so the runtime receives the
+      // resolved Electron-safe environment without conflicting env options.
+      connection: RuntimeConnection.forStdio({
+        path: resolvedCliPath,
+        env: shellEnv,
+      }),
+      workingDirectory: this.vaultPath ?? undefined,
+      clientInfo: {
+        applicationName: "Obsidian",
+        integrationName: "obsidian-copilot-plugin",
+      },
+    };
+
+    // A fresh client means the SDK's model cache is gone; drop ours too.
+    this.modelsCache = null;
     this.client = new CopilotClientSDK(clientOptions);
     await this.createSession(sdkTools);
 
@@ -244,6 +290,22 @@ export class CopilotClientManager {
     this.stopHeartbeat();
     this.startHeartbeat();
     this.onStateChange?.("connected");
+
+    // Surface an auth problem immediately instead of waiting for the first
+    // send to fail with a cryptic error.
+    void this.checkAuthOnConnect();
+  }
+
+  // After connecting, warn once if the CLI isn't signed in.
+  private async checkAuthOnConnect(): Promise<void> {
+    try {
+      const auth = await this.client?.getAuthStatus?.();
+      if (auth && auth.isAuthenticated === false) {
+        new Notice("⚠️ GitHub Copilot is not signed in. Run `copilot` then `/login` in a terminal.", 8000);
+      }
+    } catch (_) {
+      // getAuthStatus is best-effort; ignore failures here.
+    }
   }
 
   private async createSession(sdkTools: any[]): Promise<void> {
@@ -285,20 +347,19 @@ export class CopilotClientManager {
       },
       ...(customAgents.length > 0 ? { customAgents } : {}),
       ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
-      // Pin the session cwd to the vault so MCP config discovery (.mcp.json,
-      // .vscode/mcp.json) and skill dirs resolve relative to the user's vault
-      // rather than Obsidian's app dir. Personal/home-scope MCP servers
-      // (e.g. ~/.copilot/mcp-config.json) are still merged in by the SDK's
-      // discovery layer.
+      // Pin the session cwd to the vault so MCP config discovery and custom
+      // instruction loading resolve relative to the user's vault.
       ...(this.vaultPath ? { workingDirectory: this.vaultPath } : {}),
-      // Auto-discover .mcp.json / .vscode/mcp.json and skill dirs from the
-      // working directory plus personal/home sources. This is what lets
-      // work-iq (when toggled above) and any other MCP servers configured
-      // via `copilot` CLI become available inside the plugin without
-      // per-plugin wiring.
       enableConfigDiscovery: true,
       onPermissionRequest: approveAll,
     });
+
+    // Record what this session was actually built with, so change-detection
+    // in updateSettings()/setModel() compares against reality (not the shared,
+    // mutated settings object).
+    this.appliedModel = this.settings.model;
+    this.appliedSystemMessage = this.settings.systemMessage;
+    this.appliedWorkIQ = this.settings.enableWorkIQ;
   }
 
   // ── Send a message ──────────────────────────────────────────────────────
@@ -315,6 +376,12 @@ export class CopilotClientManager {
     }
 
     let fullContent = "";
+    // Authoritative complete messages from `assistant.message`. Tool-using turns
+    // sometimes deliver the reply ONLY via this event with no `assistant.message_delta`
+    // events at all, which previously left the chat bubble blank ("connects but
+    // never responds"). We treat complete messages as the source of truth and use
+    // deltas only for the live typing effect.
+    const completeMessages: string[] = [];
 
     try {
       if (this.settings.streamResponses) {
@@ -322,22 +389,34 @@ export class CopilotClientManager {
         // Unsubscribe handlers after idle/error so they don't stack across sends
         const unsubDelta = this.session.on("assistant.message_delta", (event: any) => {
           const chunk = event.data?.deltaContent ?? "";
+          if (!chunk) return;
           fullContent += chunk;
           onChunk(chunk);
         });
 
-        const unsubIdle = this.session.on("session.idle", () => {
+        const unsubMessage = this.session.on("assistant.message", (event: any) => {
+          const text = event.data?.content ?? "";
+          if (text) completeMessages.push(text);
+        });
+
+        const finalize = (done: () => void) => {
           unsubDelta();
+          unsubMessage();
           unsubIdle();
           unsubError();
-          onDone(fullContent);
+          done();
+        };
+
+        const unsubIdle = this.session.on("session.idle", () => {
+          // Prefer the complete message(s); fall back to streamed deltas only if
+          // no complete message arrived. This renders correctly whether or not
+          // the CLI emitted incremental deltas for this turn.
+          const complete = completeMessages.join("\n\n");
+          finalize(() => onDone(complete || fullContent));
         });
 
         const unsubError = this.session.on("session.error", (event: any) => {
-          unsubDelta();
-          unsubIdle();
-          unsubError();
-          onError(new Error(event.data?.message ?? "Session error"));
+          finalize(() => onError(new Error(event.data?.message ?? "Session error")));
         });
 
         await this.session.send({ prompt: content });
@@ -355,13 +434,100 @@ export class CopilotClientManager {
     }
   }
 
+  // ── Live model list (T1) ────────────────────────────────────────────────
+  // Returns the SDK's live model list (id, name, premium multiplier, reasoning
+  // efforts), cached after the first success. Falls back to the hardcoded
+  // AVAILABLE_MODELS list when offline or on error so the UI always has data.
+  async listModels(forceRefresh = false): Promise<ModelOption[]> {
+    if (this.modelsCache && !forceRefresh) return this.modelsCache;
+    if (!this.client || !this.isConnected) return AVAILABLE_MODELS;
+    try {
+      const models: any[] = await this.client.listModels();
+      const mapped: ModelOption[] = models.map((m) => ({
+        value: m.id,
+        label: m.name ?? m.id,
+        multiplier: m.billing?.multiplier,
+        reasoningEfforts: m.supportedReasoningEfforts,
+      }));
+      // Always offer an explicit "Default (auto)" entry first.
+      this.modelsCache = [{ value: "", label: "Default (auto)" }, ...mapped];
+      return this.modelsCache;
+    } catch (err) {
+      console.warn("[Copilot] listModels failed, using fallback list:", err);
+      return AVAILABLE_MODELS;
+    }
+  }
+
+  // ── Switch model in place, preserving history (T2) ───────────────────────
+  // session.setModel() keeps the conversation; switching to "" (Default/auto)
+  // can't be expressed via setModel, so we fall back to a session reset only
+  // in that case (or if setModel throws).
+  async setModel(model: string): Promise<void> {
+    this.settings.model = model;
+    if (!this.isConnected || !this.client) {
+      this.appliedModel = model; // applied on next createSession
+      return;
+    }
+    if (model && this.session) {
+      try {
+        await this.session.setModel(model);
+        this.appliedModel = model;
+        return;
+      } catch (err) {
+        console.warn("[Copilot] setModel failed, resetting session:", err);
+      }
+    }
+    await this.resetSession(); // handles empty model / failure (updates appliedModel)
+  }
+
+  // ── Abort the in-flight generation (T3) ──────────────────────────────────
+  // Cancels the currently processing message. The session stays valid and
+  // fires session.idle, which the send handlers use to finalize the partial.
+  async abort(): Promise<void> {
+    try {
+      await this.session?.abort?.();
+    } catch (err) {
+      console.warn("[Copilot] abort failed:", err);
+    }
+  }
+
+  // ── Health & auth passthroughs (T4) ──────────────────────────────────────
+  async getAuthStatus(): Promise<any | null> {
+    if (!this.client || !this.isConnected) return null;
+    try {
+      return await this.client.getAuthStatus();
+    } catch (err) {
+      console.warn("[Copilot] getAuthStatus failed:", err);
+      return null;
+    }
+  }
+
+  async getStatus(): Promise<any | null> {
+    if (!this.client || !this.isConnected) return null;
+    try {
+      return await this.client.getStatus();
+    } catch (err) {
+      console.warn("[Copilot] getStatus failed:", err);
+      return null;
+    }
+  }
+
   // ── Heartbeat ───────────────────────────────────────────────────────────
+  // Actively pings the server so we detect a dead CLI subprocess between
+  // sends (not just when a send fails). A failed ping marks us disconnected
+  // and kicks off the existing exponential-backoff reconnect.
   private startHeartbeat(): void {
-    this.heartbeatIntervalId = setInterval(() => {
-      // Safety net: if we're disconnected but not actively reconnecting,
-      // kick off the reconnect process (covers idle/unexpected drops).
-      if (!this.isConnected && this.shouldAttemptReconnect()) {
-        this.scheduleReconnect();
+    this.heartbeatIntervalId = setInterval(async () => {
+      if (this.isManualDisconnect || this.isReconnecting) return;
+      if (!this.client || !this.isConnected) {
+        if (this.shouldAttemptReconnect()) this.scheduleReconnect();
+        return;
+      }
+      try {
+        await this.client.ping();
+      } catch (_) {
+        this.isConnected = false;
+        if (this.shouldAttemptReconnect()) this.scheduleReconnect();
       }
     }, 30_000);
   }
@@ -431,15 +597,36 @@ export class CopilotClientManager {
     }
   }
 
-  // ── Update settings (reconnect if model changed) ────────────────────────
+  // ── Update settings (switch model in place; reset only when required) ────
   async updateSettings(newSettings: CopilotPluginSettings): Promise<void> {
-    const modelChanged = newSettings.model !== this.settings.model;
-    const systemChanged = newSettings.systemMessage !== this.settings.systemMessage;
-    const workIQChanged = newSettings.enableWorkIQ !== this.settings.enableWorkIQ;
+    // Compare against what was last APPLIED to the session, not against
+    // this.settings — the plugin mutates the same settings object in place,
+    // so comparing newSettings to this.settings would always be false.
+    const modelChanged = newSettings.model !== this.appliedModel;
+    const systemChanged = newSettings.systemMessage !== this.appliedSystemMessage;
+    const workIQChanged = newSettings.enableWorkIQ !== this.appliedWorkIQ;
     this.settings = newSettings;
 
-    if ((modelChanged || systemChanged || workIQChanged) && this.isConnected && this.client) {
+    if (!this.isConnected || !this.client) return;
+
+    // systemMessage / WorkIQ changes require a brand-new session.
+    if (systemChanged || workIQChanged) {
       await this.resetSession();
+      return;
+    }
+
+    // Model-only change: switch in place to preserve conversation history.
+    if (modelChanged) {
+      if (newSettings.model && this.session) {
+        try {
+          await this.session.setModel(newSettings.model);
+          this.appliedModel = newSettings.model;
+          return;
+        } catch (err) {
+          console.warn("[Copilot] setModel failed, resetting session:", err);
+        }
+      }
+      await this.resetSession(); // empty model (Default/auto) or setModel failure
     }
   }
 
@@ -453,7 +640,16 @@ export class CopilotClientManager {
       await this.session?.close?.();
     } catch (_) {}
     try {
-      await this.client?.stop?.();
+      // Race graceful stop against a timeout; if it hangs, force-kill the CLI
+      // so plugin unload never leaves an orphaned subprocess.
+      const stop = this.client?.stop?.();
+      if (stop) {
+        const timeout = new Promise((resolve) => setTimeout(resolve, 3000));
+        await Promise.race([stop, timeout]);
+      }
+    } catch (_) {}
+    try {
+      await this.client?.forceStop?.();
     } catch (_) {}
     this.session = null;
     this.client = null;
@@ -486,7 +682,7 @@ export class CopilotClientManager {
     if (msg.includes("exited") && (msg.includes("null") || msg.includes("code null"))) {
       return "Copilot CLI crashed on startup. This usually means Node.js can't run the CLI.\n\n" +
         "Fix:\n" +
-        "1. Ensure Node.js 18+ is installed: node --version\n" +
+        "1. Ensure Node.js 20.19+ (or 22.12+) is installed: node --version\n" +
         "2. Reinstall the CLI: npm install -g @github/copilot\n" +
         "3. Verify it works: npx @github/copilot --version\n" +
         "4. If using NVM, make sure your default alias is set: nvm alias default node";

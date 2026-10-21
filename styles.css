@@ -236,6 +236,23 @@
 .copilot-send-btn:disabled { opacity: 0.12; cursor: default; }
 .copilot-send-btn svg { width: 13px; height: 13px; }
 
+/* Stop affordance while a generation is in flight */
+.copilot-send-btn.is-stopping {
+  background: var(--background-modifier-error, #b3261e);
+  color: var(--text-on-accent);
+}
+.copilot-send-btn.is-stopping:hover:not(:disabled) {
+  background: var(--background-modifier-error-hover, #c8362e);
+}
+
+/* Premium-request multiplier badge in the model menu */
+.copilot-agent-item-name { display: inline-flex; align-items: center; gap: 6px; }
+.copilot-model-multiplier {
+  font-size: 10px; line-height: 1; padding: 2px 5px; border-radius: 6px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted); font-weight: 600;
+}
+
 .copilot-pills { display: flex; flex-wrap: wrap; gap: 6px; }
 
 .copilot-pill {

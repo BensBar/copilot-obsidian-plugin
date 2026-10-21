@@ -2,7 +2,6 @@
 
 Bring GitHub Copilot's full agentic AI engine directly into your Obsidian vault. Chat, generate notes, search your knowledge base, and connect to GitHub — all without leaving Obsidian.
 
-![Status: Technical Preview](https://img.shields.io/badge/status-technical%20preview-orange)
 ![Requires: Copilot CLI](https://img.shields.io/badge/requires-Copilot%20CLI-blue)
 
 ---
@@ -16,7 +15,7 @@ Bring GitHub Copilot's full agentic AI engine directly into your Obsidian vault.
 - **GitHub integration** — The Copilot CLI's built-in MCP GitHub server is available in every session: search issues, analyze PRs, summarize repos
 - **Quick actions** — One-click pills for common tasks (summarize, find gaps, improve writing)
 - **Append to note** — Push any AI response directly into your active note with one click
-- **Model switching** — Choose between Claude Sonnet, GPT-5, Gemini, and more from settings
+- **Model switching** — Choose from the live model catalog, including billing multipliers and reasoning support
 - **BYOK support** — Use your own API keys from Anthropic, OpenAI, or Azure AI Foundry
 - **Theme compatible** — Uses Obsidian CSS variables; works with any community theme
 
@@ -28,6 +27,8 @@ Bring GitHub Copilot's full agentic AI engine directly into your Obsidian vault.
 You need an active GitHub Copilot subscription (Free, Pro, Pro+, Business, or Enterprise). Each Copilot message consumes one premium request from your plan allowance.
 
 ### 2. Copilot CLI installed & authenticated
+
+Install GitHub Copilot CLI **1.0.96 or newer**:
 
 ```bash
 # Install globally via npm
@@ -42,12 +43,16 @@ copilot /login
 
 Verify it works: `copilot --version`
 
-### 3. Node.js 18+
-Required for the `@github/copilot-sdk` package bundled with this plugin.
+### 3. Node.js 20.19+ (or 22.12+)
+Required by the current `@github/copilot-sdk` package and Copilot CLI.
 
 ---
 
 ## Installation
+
+### Existing installations
+
+The plugin ID is changing from `obsidian-copilot` to `github-copilot-agent` for Community Plugins directory compatibility. Disable the old plugin, but do not delete its folder. Install and enable the new ID; on first launch, settings are copied automatically and the old data file is left untouched. Remove the old folder only after confirming the new installation has your settings.
 
 ### Option 1 — BRAT (easiest, recommended)
 
@@ -65,7 +70,7 @@ Required for the `@github/copilot-sdk` package bundled with this plugin.
    - `main.js`
    - `manifest.json`
    - `styles.css`
-2. Create the folder `<your-vault>/.obsidian/plugins/copilot-obsidian-plugin/`
+2. Create the folder `<your-vault>/.obsidian/plugins/github-copilot-agent/`
 3. Copy the three downloaded files into that folder
 4. In Obsidian: **Settings → Community plugins → Enable** → toggle on **GitHub Copilot**
 5. Click the bot icon in the left ribbon, or use **Ctrl/Cmd+P → Open Copilot chat**
@@ -76,7 +81,7 @@ Required for the `@github/copilot-sdk` package bundled with this plugin.
 2. Run `npm install && npm run build`
 3. Copy `main.js`, `styles.css`, and `manifest.json` into:
    ```
-   <your-vault>/.obsidian/plugins/obsidian-copilot/
+   <your-vault>/.obsidian/plugins/github-copilot-agent/
    ```
 4. In Obsidian: **Settings → Community plugins → Enable** → toggle on **GitHub Copilot**
 5. Click the bot icon in the left ribbon, or use **Ctrl/Cmd+P → Open Copilot chat**
@@ -129,10 +134,11 @@ Copilot can autonomously call these tools during a session:
 | Setting | Default | Description |
 |---|---|---|
 | CLI path | `copilot` | Path to Copilot CLI binary |
-| Model | `claude-sonnet-4-5` | AI model for all interactions |
+| Model | `Default (auto)` | AI model for all interactions |
 | Stream responses | on | Show tokens as they're generated |
 | System message | *(see defaults)* | System prompt for every session |
 | Auto-include active note | off | Inject active note context automatically |
+| Allow shell commands | on | Let Copilot run shell commands from the vault |
 | Max history length | 50 | Messages before oldest are trimmed |
 | Show timestamps | on | Time sent under each message |
 | Chat font size | 14px | Font size for the chat panel |
@@ -143,7 +149,7 @@ Copilot can autonomously call these tools during a session:
 
 ```
 Obsidian Plugin (TypeScript/Electron)
-  └─ @github/copilot-sdk (Technical Preview)
+  └─ @github/copilot-sdk 1.0.20
        └─ JSON-RPC → Copilot CLI (server mode)
                         └─ GitHub Copilot Agent Runtime
                              ├─ LLM (Claude / GPT / Gemini)
@@ -176,14 +182,14 @@ The SDK communicates with the Copilot CLI as a subprocess via JSON-RPC. The plug
 
 **Plugin won't load**
 - Check Developer Tools console (Ctrl+Shift+I) for errors
-- Ensure you're on Obsidian 1.4.0+
-- Ensure Node.js 18+ is installed
+- Ensure you're on Obsidian 1.7.2+
+- Ensure Node.js 20.19+ (or 22.12+) is installed
 
 ---
 
-## Notes on the SDK (Technical Preview)
+## Notes on the SDK
 
-The `@github/copilot-sdk` is currently in **technical preview** as of early 2026. It is functional but may have breaking changes before GA. This plugin will track SDK updates.
+The plugin uses `@github/copilot-sdk` **1.0.20** and the separately installed Copilot CLI (1.0.96 or newer). The SDK communicates with the CLI over JSON-RPC; keep both reasonably current.
 
 Each prompt consumes **one premium request** from your GitHub Copilot plan. Tool calls made by the agent during a single prompt may consume additional requests depending on plan tier.
 

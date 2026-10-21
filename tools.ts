@@ -1,10 +1,26 @@
 import { App, MarkdownView, TFile, Notice } from "obsidian";
+import { exec } from "child_process";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
 
 // ─── Tool Definitions ──────────────────────────────────────────────────────
 // These are passed to the Copilot SDK session so the agent can interact
 // with the Obsidian vault programmatically.
 
-export function buildVaultTools(app: App, getActiveMarkdownView?: () => MarkdownView | null) {
+export interface BuildToolsOptions {
+  enableShellTool?: boolean;
+  /** Login-shell PATH so the spawned shell sees node, npm, npx, brew, etc. */
+  shellEnv?: Record<string, string>;
+  /** Absolute path to the vault — used as cwd for shell commands. */
+  cwd?: string | null;
+}
+
+export function buildVaultTools(
+  app: App,
+  getActiveMarkdownView?: () => MarkdownView | null,
+  options: BuildToolsOptions = {}
+) {
   const resolveActiveView = (): MarkdownView | null => {
     // 1. Use the plugin's tracked last-focused view (survives focus moving to chat panel)
     const tracked = getActiveMarkdownView?.();
@@ -24,6 +40,24 @@ export function buildVaultTools(app: App, getActiveMarkdownView?: () => Markdown
     return null;
   };
 
+  const tools: any[] = [];
+
+  // The shell tool is appended at the end after the vault tools array is built.
+  // (See the push at the bottom of this function.)
+
+  return (() => {
+    tools.push(...buildVaultToolsArray(app, resolveActiveView));
+    if (options.enableShellTool) {
+      tools.push(buildShellTool(options.shellEnv ?? {}, options.cwd ?? null));
+    }
+    return tools;
+  })();
+}
+
+function buildVaultToolsArray(
+  app: App,
+  resolveActiveView: () => MarkdownView | null
+) {
   return [
     // ── Read active note ──────────────────────────────────────────────────
     {
@@ -69,8 +103,8 @@ export function buildVaultTools(app: App, getActiveMarkdownView?: () => Markdown
         required: ["path"],
       },
       handler: async (args: { path: string }) => {
-        const file = app.vault.getAbstractFileByPath(args.path);
-        if (!file || !(file instanceof TFile)) {
+        const file = app.vault.getFileByPath(args.path);
+        if (!file) {
           return { error: `Note not found at path: ${args.path}` };
         }
         const content = await app.vault.read(file as TFile);
@@ -150,7 +184,7 @@ export function buildVaultTools(app: App, getActiveMarkdownView?: () => Markdown
           : `${args.title}.md`;
 
         // Ensure folder exists
-        if (folder && !app.vault.getAbstractFileByPath(folder)) {
+        if (folder && !app.vault.getFolderByPath(folder)) {
           await app.vault.createFolder(folder);
         }
 
@@ -244,7 +278,7 @@ export function buildVaultTools(app: App, getActiveMarkdownView?: () => Markdown
         const folder =
           root === "/"
             ? app.vault.getRoot()
-            : app.vault.getAbstractFileByPath(root);
+            : app.vault.getFolderByPath(root);
 
         if (!folder) return { error: `Folder not found: ${root}` };
 
@@ -279,8 +313,7 @@ export function buildVaultTools(app: App, getActiveMarkdownView?: () => Markdown
         let file: TFile | null = null;
 
         if (args.path) {
-          const f = app.vault.getAbstractFileByPath(args.path);
-          if (f instanceof TFile) file = f;
+          file = app.vault.getFileByPath(args.path);
         } else {
           const view = resolveActiveView();
           file = view?.file ?? null;
@@ -298,4 +331,97 @@ export function buildVaultTools(app: App, getActiveMarkdownView?: () => Markdown
       },
     },
   ];
+}
+
+// ─── Shell tool ────────────────────────────────────────────────────────────
+// Lets the agent run arbitrary shell commands from the vault directory so
+// it can install MCP servers (e.g. `npm install -g @workiq/mcp-server`),
+// inspect tool availability, run git, etc. Gated by settings.enableShellTool
+// and uses the same login-shell env we resolve for the CLI so PATH, NVM,
+// and Homebrew bins are visible.
+function buildShellTool(shellEnv: Record<string, string>, cwd: string | null) {
+  return {
+    name: "run_shell_command",
+    description:
+      "Execute a shell command from the vault directory and return its stdout, stderr, and exit code. " +
+      "Use for installing MCP servers (e.g. `npm install -g <package>`), checking tool availability " +
+      "(`which copilot`, `node --version`), running git, or any other system operation the user asks for. " +
+      "Commands run with the user's login-shell PATH so node, npm, npx, brew, and similar tools are available. " +
+      "Default timeout is 5 minutes — long enough for npm installs.",
+    parameters: {
+      type: "object" as const,
+      properties: {
+        command: {
+          type: "string",
+          description:
+            "The shell command to execute (e.g. `npm install -g @github/copilot`). " +
+            "Runs through /bin/sh -c, so pipes and redirection work.",
+        },
+        cwd: {
+          type: "string",
+          description:
+            "Optional working directory. Defaults to the vault root. " +
+            "Absolute paths only; relative paths resolve against the vault root.",
+        },
+        timeoutMs: {
+          type: "number",
+          description:
+            "Optional timeout in milliseconds. Defaults to 300000 (5 min). " +
+            "Maximum 600000 (10 min).",
+        },
+      },
+      required: ["command"],
+    },
+    handler: async (
+      args: { command: string; cwd?: string; timeoutMs?: number },
+      invocation?: { signal?: AbortSignal },
+    ) => {
+      if (!args?.command || typeof args.command !== "string") {
+        return { error: "command is required and must be a string" };
+      }
+      const timeout = Math.min(Math.max(args.timeoutMs ?? 300_000, 1_000), 600_000);
+      let workdir: string | undefined;
+      if (args.cwd) {
+        workdir = args.cwd.startsWith("/") || /^[a-zA-Z]:\\/.test(args.cwd)
+          ? args.cwd
+          : (cwd ? `${cwd}/${args.cwd}` : args.cwd);
+      } else if (cwd) {
+        workdir = cwd;
+      }
+
+      // Cap captured stdio at ~1 MB each so a runaway command can't blow up
+      // the renderer; exec rejects with code "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+      // past this point, which we surface as a normal tool error.
+      const maxBuffer = 1024 * 1024;
+
+      try {
+        const { stdout, stderr } = await execAsync(args.command, {
+          cwd: workdir,
+          env: { ...process.env, ...shellEnv },
+          timeout,
+          maxBuffer,
+          windowsHide: true,
+          signal: invocation?.signal,
+        });
+        return {
+          command: args.command,
+          cwd: workdir ?? process.cwd(),
+          exitCode: 0,
+          stdout: stdout.toString(),
+          stderr: stderr.toString(),
+        };
+      } catch (err: any) {
+        return {
+          command: args.command,
+          cwd: workdir ?? process.cwd(),
+          exitCode: typeof err?.code === "number" ? err.code : 1,
+          stdout: err?.stdout?.toString?.() ?? "",
+          stderr: err?.stderr?.toString?.() ?? "",
+          error: err?.message ?? String(err),
+          ...(err?.killed ? { killed: true } : {}),
+          ...(err?.signal ? { signal: err.signal } : {}),
+        };
+      }
+    },
+  };
 }

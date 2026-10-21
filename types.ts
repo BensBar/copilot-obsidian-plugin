@@ -14,6 +14,7 @@ export interface CopilotPluginSettings {
   systemMessage: string;
   streamResponses: boolean;
   autoContextActiveNote: boolean;
+  enableShellTool: boolean;
 
   // Integrations
   enableWorkIQ: boolean;
@@ -37,6 +38,7 @@ export const DEFAULT_SETTINGS: CopilotPluginSettings = {
     "You are a knowledgeable AI assistant embedded in Obsidian. You help the user manage their personal knowledge base, draft notes, summarize content, connect ideas, and answer questions. Be concise, thoughtful, and markdown-aware.",
   streamResponses: true,
   autoContextActiveNote: false,
+  enableShellTool: true,
   enableWorkIQ: false,
   customAgents: [
     {
@@ -64,13 +66,35 @@ export const DEFAULT_SETTINGS: CopilotPluginSettings = {
   maxHistoryLength: 50,
 };
 
-export const AVAILABLE_MODELS = [
+// A selectable model entry. `multiplier` and `reasoningEfforts` are populated
+// when the list comes live from the SDK (`client.listModels()`); the hardcoded
+// fallback list below only fills `value`/`label`.
+export interface ModelOption {
+  value: string;
+  label: string;
+  multiplier?: number;
+  reasoningEfforts?: string[];
+}
+
+export const AVAILABLE_MODELS: ModelOption[] = [
   { value: "", label: "Default (auto)" },
+  // Claude
+  { value: "claude-sonnet-4.6", label: "Claude Sonnet 4.6" },
   { value: "claude-sonnet-4.5", label: "Claude Sonnet 4.5" },
-  { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
-  { value: "gpt-5", label: "GPT-5" },
-  { value: "gpt-4.1", label: "GPT-4.1" },
-  { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+  { value: "claude-haiku-4.5", label: "Claude Haiku 4.5" },
+  { value: "claude-opus-4.8", label: "Claude Opus 4.8" },
+  { value: "claude-opus-4.7", label: "Claude Opus 4.7" },
+  { value: "claude-opus-4.6", label: "Claude Opus 4.6" },
+  { value: "claude-opus-4.5", label: "Claude Opus 4.5" },
+  // OpenAI
+  { value: "gpt-5.5", label: "GPT-5.5" },
+  { value: "gpt-5.4", label: "GPT-5.4" },
+  { value: "gpt-5.4-mini", label: "GPT-5.4 mini" },
+  { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
+  { value: "gpt-5-mini", label: "GPT-5 mini" },
+  // Gemini
+  { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" },
+  { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
 ];
 
 export interface ChatMessage {

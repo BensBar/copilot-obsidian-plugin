@@ -1,10 +1,10 @@
-# Copilot Instructions — obsidian-copilot
+# Copilot Instructions — GitHub Copilot for Obsidian
 
 ## Project overview
 
-Obsidian plugin (TypeScript/Electron) that embeds GitHub Copilot as an agentic chat panel. Uses the `@github/copilot-sdk` (technical preview) to spawn the Copilot CLI as a JSON-RPC subprocess. Desktop only.
+Obsidian plugin (TypeScript/Electron) that embeds GitHub Copilot as an agentic chat panel. Uses the `@github/copilot-sdk` to spawn the Copilot CLI as a JSON-RPC subprocess. Desktop only.
 
-**Stack:** TypeScript 4.7 · esbuild · Obsidian Plugin API · Node.js 18+ · Copilot SDK
+**Stack:** TypeScript 6 · esbuild · Obsidian Plugin API · Node.js 20.19+ or 22.12+ · Copilot SDK 1.0.20
 
 ## Architecture
 
@@ -28,7 +28,7 @@ npm run dev              # esbuild watch mode → main.js (with inline sourcemap
 npm run build            # tsc --noEmit --skipLibCheck && esbuild production
 ```
 
-Output: `main.js` (CJS bundle), `styles.css`, `manifest.json` — copy all three to `<vault>/.obsidian/plugins/obsidian-copilot/`.
+Output: `main.js` (CJS bundle), `styles.css`, `manifest.json` — copy all three to `<vault>/.obsidian/plugins/github-copilot-agent/`.
 
 No test suite exists. Validate manually in Obsidian (Developer Tools: Ctrl+Shift+I / Cmd+Opt+I).
 
@@ -51,7 +51,7 @@ No test suite exists. Validate manually in Obsidian (Developer Tools: Ctrl+Shift
 - **No streaming timeout:** If `session.idle` / `session.error` never fire, listeners leak. No client-side send timeout exists.
 - **search_vault performance:** Sequential `cachedRead()` over all markdown files. Slow on vaults with 10k+ notes.
 - **CLI path errors:** If resolution fails, the SDK surfaces a generic error. The `formatConnectionError()` method maps common patterns but can't cover all NVM/shell edge cases.
-- **SDK breaking changes:** `@github/copilot-sdk@^0.1.32` is technical preview. Pin version carefully on upgrade.
+- **SDK updates:** `@github/copilot-sdk` is pinned; review its runtime and API changes before upgrading.
 
 ## File reference
 
